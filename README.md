@@ -84,7 +84,7 @@ proxies y sin subir tus claves a ningún servidor.
   contextos `file://`). Tolera muchas más entradas que `localStorage` y **sobrevive a recargas
   y reinicios**: al reabrir la app, catálogo, detalles, similares y filmografías salen de caché.
   TTL por tipo de dato: géneros 7 días, listados 10 min, detalles 24 h, puntuaciones 12 h,
-  Trakt 30 min, IMDb 24 h.
+  Trakt 30 min, IMDb 6 h (y **30 min** para notas con menos de 500 votos, que cambian rápido).
 - **Purga automática**: al pasar de 400 entradas se eliminan las expiradas y la mitad más
   antigua. La caché antigua de `sessionStorage` se migra sola a IndexedDB.
 - **Imágenes adaptativas**: `srcset` con `w185`, `w342` y `w500` más `sizes`, de modo que un
@@ -115,6 +115,13 @@ proxies y sin subir tus claves a ningún servidor.
 - Barra de estado de Trakt con «Actualizar» y hora de la última sincronización.
 - Tarjetas con **IMDb como nota principal** (amarillo) y TMDb como dato secundario; si OMDb
   aún no ha respondido o no encuentra la película, se muestra TMDb y se sustituye solo.
+  Solo se pinta como IMDb la nota **verificada por el ID de TMDb**: si OMDb solo coincide por
+  título (puede ser otra película con el mismo nombre), la tarjeta mantiene TMDb y se reintenta
+  por ID. El tooltip del badge indica los votos de IMDb.
+- **Una sola nota por película**: al abrir una ficha se consulta OMDb por ID aunque hubiera una
+  nota guardada, se actualiza la caché y **la tarjeta cambia al momento**. Así la tarjeta y la
+  ficha no pueden mostrar 8,7 y 7,1 a la vez. Las notas con pocos votos se refrescan cada 30
+  minutos porque son las que más se mueven (estrenos).
 - «✓ Vista», «★ tu nota» y corazón de watchlist en la tarjeta.
 - **Orden por nota IMDb** (`Nota IMDb mejor → peor` / `peor → mejor`): ranking local sobre las
   **60 películas más populares** que cumplen los filtros (3 páginas de TMDb), con paginación de
@@ -124,8 +131,8 @@ proxies y sin subir tus claves a ningún servidor.
   publicados, títulos que solo coinciden por nombre o con nota inflada por pocos votos) no
   aparecen en la lista y se cuentan como «sin nota fiable». Es lo que evita que un estreno de
   2026 con 120 votos se cuele como «mejor película». Si **ninguna** candidata supera ese
-  criterio, la app no disfraza el orden de TMDb: muestra «Sin notas IMDb fiables todavía» y
-  explica qué hacer.
+  criterio, la app no disfraza el orden de TMDb: deja la rejilla con un aviso y el botón para
+  añadir candidatas, en lugar de mostrar una lista que parezca un ranking.
 - **«Solo no vistas»**: oculta las películas que ya figuran en tu historial de Trakt. Se aplica
   al pintar, sin volver a pedir datos, así que se puede activar y desactivar al instante; el
   contador indica cuántas se han ocultado.
@@ -134,15 +141,21 @@ proxies y sin subir tus claves a ningún servidor.
   ensuciar el historial y sin perder los filtros activos; atrás/adelante abre o cierra la ficha.
 - **Nota IMDb mínima** (6,0 / 7,0 / 7,5 / 8,0 / 8,5): aparece solo en modo ranking y filtra
   **en el cliente**, sin hacer ni una petición. El contador y la paginación se recalculan.
-- **Ampliar el ranking**: botón «＋ Añadir 60 candidatas» bajo la rejilla, de 60 → 120 → 180.
-  Antes de gastar cuota avisa con un `confirm()` indicando cuántas consultas a OMDb hará.
+- **Ampliar el ranking (botón «＋ Añadir 60 candidatas»)**: TMDb no sabe ordenar por IMDb, así
+  que el ranking se calcula sobre las **60 películas más populares** que cumplen los filtros.
+  Si la que buscas es menos popular, no está en ese bloque. Este botón pide las **60
+  siguientes** por popularidad (páginas 4-6 de TMDb) y sus notas a OMDb, y luego otras 60
+  (hasta 180). No cambia los filtros ni el orden: solo amplía la lista de candidatas para que
+  entren películas menos populares. Antes de gastar cuota avisa con un `confirm()` indicando
+  cuántas consultas hará; al llegar a 180 queda como «Máximo alcanzado».
   El bloque se guarda en `sessionStorage` (`cine.rank.v1`), así que **cambiar de página, de
   dirección, de nota mínima o activar «Solo no vistas» no vuelve a pedir nada**, ni siquiera
   tras recargar la pestaña.
-  Al llegar a 180 el botón queda como «Máximo alcanzado».
 - **Vista de watchlist propia**: funciona incluso sin API key, con búsqueda y orden local.
 - Modal de detalle con sinopsis, puntuaciones (IMDb/RT/MC/Letterboxd/Trakt/MAL/TMDb),
-  tráiler, reparto, plataformas por región y enlaces a TMDb/IMDb/Trakt.
+  tráiler, reparto, plataformas por región y enlaces a TMDb/IMDb/Trakt. MDBList a veces manda
+  las notas en escala 0-100 (TMDb 69, Trakt 70): se convierten a la escala de cada fuente
+  (6,9 y 7,0). IMDb y TMDb directos tienen prioridad sobre los agregados.
 - **Películas similares** al final del detalle: 8 recomendaciones de TMDb con póster, año y
   nota; un clic abre su ficha sin cerrar el modal.
 - **Reparto y dirección clicables**: al pulsar una persona se abre su ficha con foto,
@@ -235,9 +248,16 @@ cinecatalogo/
 - **Caso 2026 probado** con 60 estrenos simulados: el estreno con nota alta pero sin `imdb_id`
   y solo 120 votos («Primetime») queda fuera; la primera tarjeta es la de mayor nota verificada
   (8,9), el estado avisa de «1 sin nota fiable» y las 20 primeras tarjetas muestran nota IMDb.
-- **Sin notas fiables**: con todas las candidatas por debajo de 500 votos, el estado dice
-  «Sin notas IMDb fiables todavía» y explica que se muestra el orden de TMDb; no se presenta
-  como ranking IMDb.
+- **Misma nota en tarjeta y ficha**: con una nota vieja de 8,7 en caché y 7,1 real en OMDb, al
+  abrir la ficha la cabecera mostró 7,1, **la tarjeta cambió a 7,1** y la caché quedó con 250.000
+  votos. Tras recargar, 0 peticiones y **0 tarjetas sin badge**.
+- **Coincidencia por título descartada**: una entrada simulada de 8,7 «por título» no se pintó
+  como IMDb; la tarjeta mostró TMDb y se volvió a consultar por ID hasta obtener 8,8 verificado.
+- **Notas 0-100 de MDBList**: TMDb 69 y Trakt 70 se mostraron como 6,9 y 7,0; el 87 de IMDb de
+  MDBList no pisó el 7,1 de OMDb.
+- **Sin notas fiables**: con todas las candidatas por debajo de 500 votos, la rejilla quedó
+  vacía (0 tarjetas) con el aviso y el botón «＋ Añadir 60 candidatas» disponible; no se mostró
+  el orden de TMDb.
 - **«Solo no vistas» dentro del ranking**: activarlo ocultó 2 películas vistas y repintó con
   **0 peticiones**; el estado pasó a «57 películas … · 2 ocultas por vistas».
 - **Auto-sincronización de Trakt**: con la caché de 5 minutos, al volver a la pestaña se

@@ -787,7 +787,7 @@ try {
     list: 10 * 60e3,
     detail: 24 * 36e5,
     scores: 12 * 36e5,
-    imdb: 24 * 36e5,
+    imdb: 6 * 36e5,
     trakt: 30 * 60e3
   };
   const TIMEOUT = 15000;
@@ -1368,12 +1368,13 @@ try {
       ? 'Máximo alcanzado (' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ')'
       : '＋ Añadir ' + (addPages * IMDB_PAGE_SIZE) + ' candidatas';
     btn.title = maxed
-      ? 'Has alcanzado el máximo de ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ' candidatas para este ranking'
-      : 'Consulta las notas que falten en OMDb y reordena el ranking';
+      ? 'Máximo alcanzado: ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ' candidatas para este ranking'
+      : 'Amplía el ranking con ' + (addPages * IMDB_PAGE_SIZE) +
+        ' películas menos populares que cumplen los filtros y consulta sus notas en OMDb';
     const note = $('rankMoreNote');
     if (note) {
       note.textContent = ready
-        ? plural(imdbPool.items.length, 'candidata', 'candidatas') + ' en el ranking · máx. ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE)
+        ? plural(imdbPool.items.length, 'analizada', 'analizadas') + ' de TMDb · máx. ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE)
         : '';
     }
   }
@@ -1684,12 +1685,15 @@ try {
 
     // La puntuación principal es la de IMDb. Mientras OMDb responde se muestra
     // la de TMDb, que se sustituye sola al llegar (ver applyImdb).
-    const cached = imdbCache && imdbCache[String(id)] ? imdbCache[String(id)].rating : null;
-    const imdbScore = cached && /^\d+(\.\d+)?$/.test(String(cached)) ? String(cached) : '';
+    const imdbInfo = imdbInfoOf(id);
+    const imdbRating = imdbInfo && imdbInfo.via === 'id' ? imdbInfo.rating : null;
+    const imdbScore = imdbRating != null ? imdbRating.toFixed(1) : '';
+    const imdbVotes = imdbRating != null ? Number(imdbInfo.votes) || 0 : 0;
+    const votesTxt = imdbVotes ? ' · ' + numFmt.format(imdbVotes) + ' votos' : '';
     let badge = '';
     if (imdbScore) {
       badge = '<span class="badge badge-main imdb" data-score="' + id + '" data-tmdb="' + tmdbScore + '"' +
-        ' title="IMDb ' + imdbScore + (tmdbScore ? ' · TMDb ' + tmdbScore : '') + '">IMDb ' + imdbScore + '</span>';
+        ' title="IMDb ' + imdbScore + votesTxt + (tmdbScore ? ' · TMDb ' + tmdbScore : '') + '">IMDb ' + imdbScore + '</span>';
     } else if (tmdbScore) {
       badge = '<span class="badge badge-main tmdb" data-score="' + id + '" data-tmdb="' + tmdbScore + '"' +
         ' title="TMDb ' + tmdbScore + (S.omdb ? ' · cargando IMDb…' : '') + '"><span class="star">★</span> ' + tmdbScore + '</span>';
@@ -1927,7 +1931,17 @@ try {
 
   function imdbRatingOf(id) {
     const i = imdbInfoOf(id);
-    return i ? i.rating : null;
+    // Solo se pinta como IMDb lo verificado por el ID de TMDb: una coincidencia por
+    // título puede ser otra película con el mismo nombre.
+    return i && i.via === 'id' ? i.rating : null;
+  }
+
+  /** Las notas con pocos votos cambian rápido (estrenos): se refrescan cada 30 min. */
+  function imdbTtlOf(c) {
+    if (!c || !c.rating) return 0;
+    if (c.via !== 'id') return 6 * 36e5;
+    if ((Number(c.votes) || 0) < IMDB_RANK_MIN_VOTES) return 30 * 60e3;
+    return TTL.imdb;
   }
 
   /** Una nota entra en el ranking solo si es fiable: IMDb ID de TMDb y votos suficientes. */
@@ -2011,7 +2025,7 @@ try {
       if (seen.has(key)) return;
       seen.add(key);
       const c = imdbCache[key];
-      const ttl = c && c.rating ? TTL.imdb : 6 * 36e5;
+      const ttl = imdbTtlOf(c) || 6 * 36e5;
       const fresh = c && now - c.ts < ttl;
       // Cachés antiguas sin votos/procedencia se completan para poder rankear.
       const needsMeta = !!(c && c.rating && (c.votes == null || !c.via));
@@ -2040,7 +2054,7 @@ try {
           via: found ? found.via : '',
           ts: Date.now()
         };
-        if (found) applyImdb(String(m.id), found.rating);
+        if (found && found.via === 'id') applyImdb(String(m.id), found.rating);
         done++;
         if (myId === state.reqId && (done % 5 === 0 || done === total)) {
           setAux('Consultando notas IMDb: ' + done + '/' + total + '…');
@@ -2112,11 +2126,13 @@ try {
       // Sin notas verificadas no se puede presentar el orden de TMDb como ranking IMDb.
       state.totalPages = 1;
       state.page = 1;
-      renderGrid(pool.slice(0, IMDB_PAGE_SIZE), 'No hay películas con estos filtros.');
+      renderGrid([], 'IMDb todavía no tiene notas fiables para estas ' +
+        plural(pool.length, 'candidata', 'candidatas') +
+        '. Añade más candidatas, quita filtros o revisa la clave de OMDb.');
       updatePagination();
       setStatus('Sin notas IMDb fiables todavía');
-      setAux('No hay notas verificadas con al menos ' + IMDB_RANK_MIN_VOTES + ' votos para estas ' +
-        plural(pool.length, 'candidata', 'candidatas') + '. Se muestra el orden de TMDb: añade candidatas o revisa la clave de OMDb.', 'warn');
+      setAux('Solo se rankean notas verificadas por el ID de TMDb con al menos ' + IMDB_RANK_MIN_VOTES +
+        ' votos en IMDb. No se muestra el orden de TMDb para no dar una nota falsa.', 'warn');
       syncImdbControls();
       writeParams();
       return;
@@ -2472,10 +2488,10 @@ try {
       if (seen.has(key)) return;
       seen.add(key);
       const c = imdbCache[key];
-      const ttl = c && c.rating ? TTL.imdb : NEGATIVE_TTL;
+      const ttl = imdbTtlOf(c) || NEGATIVE_TTL;
       const fresh = c && now - c.ts < ttl;
       const needsMeta = !!(c && c.rating && (c.votes == null || !c.via));
-      if (fresh && !needsMeta) applyImdb(key, c.rating);
+      if (fresh && !needsMeta && c.via === 'id') applyImdb(key, c.rating);
       else queue.push(m);
     });
     if (!queue.length) return;
@@ -2500,7 +2516,7 @@ try {
             ts: Date.now()
           };
           if (found) {
-            applyImdb(key, found.rating);
+            if (found.via === 'id') applyImdb(key, found.rating);
             failures = 0;
           } else {
             failures++;
@@ -2527,11 +2543,13 @@ try {
 
   function applyImdb(key, rating) {
     if (!rating || !IMDB_RATING.test(String(rating))) return;
+    const info = imdbInfoOf(key);
+    const votesTxt = info && info.votes ? ' · ' + numFmt.format(info.votes) + ' votos' : '';
     all('[data-score="' + key + '"]').forEach((node) => {
       const tmdb = node.dataset.tmdb || '';
       node.className = 'badge badge-main imdb';
       node.textContent = 'IMDb ' + rating;
-      node.title = 'IMDb ' + rating + (tmdb ? ' · TMDb ' + tmdb : '');
+      node.title = 'IMDb ' + rating + votesTxt + (tmdb ? ' · TMDb ' + tmdb : '');
       // La tarjeta pasa a mostrar IMDb como nota principal; TMDb queda como dato secundario.
       const card = node.closest ? node.closest('.card') : null;
       const meta = card ? card.querySelector('.meta') : null;
@@ -2852,7 +2870,8 @@ try {
     let omdbRatingValue = null;
 
     if (S.omdb && imdbId) {
-      tasks.push(httpJson(API.OMDB + '?apikey=' + encodeURIComponent(S.omdb) + '&i=' + encodeURIComponent(imdbId), { ttl: TTL.scores })
+      // Se pide siempre a OMDb para que la ficha y la tarjeta no muestren notas distintas.
+      tasks.push(httpJson(API.OMDB + '?apikey=' + encodeURIComponent(S.omdb) + '&i=' + encodeURIComponent(imdbId), { ttl: TTL.scores, force: true })
         .then((o) => {
           if (!o || o.Response === 'False') return;
           if (o.imdbRating && o.imdbRating !== 'N/A') {
@@ -2882,13 +2901,14 @@ try {
               const src = String(r.source || r.provider || '').toLowerCase().trim();
               const key = MDB_ALIASES[src] || src;
               const val = Number(r.value != null ? r.value : r.score);
-              if (key && isFinite(val)) values[key] = val;
+              // No pisa IMDb (OMDb) ni TMDb (API): son las fuentes directas.
+              if (key && isFinite(val) && !(key in values)) values[key] = val;
             });
           } else if (ratings && typeof ratings === 'object') {
             Object.entries(ratings).forEach(([src, val]) => {
               const key = MDB_ALIASES[src.toLowerCase().trim()] || src.toLowerCase().trim();
               const n = Number(val);
-              if (key && isFinite(n)) values[key] = n;
+              if (key && isFinite(n) && !(key in values)) values[key] = n;
             });
           }
         }).catch(() => {}));
@@ -2900,6 +2920,11 @@ try {
       await Promise.all(tasks);
     }
     if (state.detailId !== id || state.personId) return;
+
+    // MDBList devuelve algunas notas en escala 0-100 (TMDb 69, Trakt 70…): se pasan a 0-10.
+    SOURCES.forEach((s) => {
+      if (s.max === 10 && isFinite(values[s.key]) && values[s.key] > 10) values[s.key] = values[s.key] / 10;
+    });
 
     // Si OMDb dio la nota por IMDb ID, se reutiliza en la tarjeta y se guarda con votos.
     if (omdbRatingValue != null) {
