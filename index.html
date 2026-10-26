@@ -717,12 +717,13 @@ try {
       </div>
 
       <div class="keyfield">
-        <label for="cfgMdblist">MDBList <span class="opt">opcional</span></label>
+        <label for="cfgMdblist">MDBList <span class="opt">recomendado</span></label>
         <div class="row">
-          <input id="cfgMdblist" type="password" placeholder="Puntuaciones agregadas (RT, MC, Letterboxd…)" autocomplete="off" spellcheck="false">
+          <input id="cfgMdblist" type="password" placeholder="Puntuaciones agregadas y ranking IMDb ampliado" autocomplete="off" spellcheck="false">
           <button class="btn icon" type="button" data-reveal="cfgMdblist" aria-label="Mostrar u ocultar">👁</button>
         </div>
-        <small>Gratis en <a href="https://mdblist.com/preferences/" target="_blank" rel="noopener noreferrer">mdblist.com/preferences</a>.</small>
+        <small>Gratis en <a href="https://mdblist.com/preferences/" target="_blank" rel="noopener noreferrer">mdblist.com/preferences</a>.
+        Permite preanalizar 240 candidatas y ordenar mejor el ranking IMDb.</small>
       </div>
 
       <div class="config-grid">
@@ -779,6 +780,7 @@ try {
     IMG: 'https://image.tmdb.org/t/p',
     OMDB: 'https://www.omdbapi.com/',
     MDBLIST: 'https://api.mdblist.com/tmdb/movie/',
+    MDBLIST_BATCH: 'https://api.mdblist.com/rating/movie/imdb',
     TRAKT: 'https://api.trakt.tv'
   };
   const LANG = 'es-ES';
@@ -814,8 +816,18 @@ try {
 
   const SORTS = ['vote_average.desc', 'vote_average.asc', 'popularity.desc', 'release_date.desc', 'revenue.desc', 'title.asc', 'imdb.desc', 'imdb.asc'];
   // El ranking IMDb se calcula en local: TMDb no sabe ordenar por esa nota.
-  const IMDB_POOL_PAGES = 3;
-  const IMDB_MAX_PAGES = 9;
+  // Sin MDBList: 1 página por lente (60 candidatas) que se amplían de 60 en 60.
+  const IMDB_LENS_COUNT = 3;
+  const IMDB_NARROW_PAGES = 1;
+  const IMDB_NARROW_MAX_PAGES = 3;
+  // Con MDBList se preanaliza un bloque mayor (más populares + mejor valoradas
+  // + más votadas) y se verifican en OMDb solo las mejores: así entran películas
+  // que nunca aparecen entre las más populares.
+  const IMDB_LENS_PAGES = 4;
+  const IMDB_VERIFY_STEP = 60;
+  const IMDB_VERIFY_MAX = 240;
+  const IMDB_AUTO_VERIFY = 120;
+  const MDB_BATCH_SIZE = 10;
   const IMDB_PAGE_SIZE = 20;
   const IMDB_MIN_VOTES = 100;
   const IMDB_RANK_MIN_VOTES = 500;
@@ -1361,20 +1373,44 @@ try {
     const btn = $('rankMoreBtn');
     if (!btn) return;
     const ready = !!(imdbPool && imdbPool.sig && imdbPool.items.length);
-    const maxed = !!imdbPool && imdbPool.pages >= IMDB_MAX_PAGES;
-    const addPages = maxed ? 0 : Math.min(3, IMDB_MAX_PAGES - (imdbPool.pages || IMDB_POOL_PAGES));
+    const note = $('rankMoreNote');
+
+    if (imdbPool && imdbPool.wide) {
+      const maxVerify = Math.min(imdbPool.items.length, IMDB_VERIFY_MAX);
+      const checked = imdbPool.checked || 0;
+      const step = Math.max(0, Math.min(IMDB_VERIFY_STEP, maxVerify - checked));
+      const maxed = ready && step === 0;
+      btn.disabled = !ready || maxed;
+      btn.textContent = maxed
+        ? 'Todo verificado (' + maxVerify + ')'
+        : '＋ Verificar ' + step + ' más';
+      btn.title = maxed
+        ? 'Ya se han verificado todas las candidatas de este bloque'
+        : 'Consulta en OMDb las ' + step + ' siguientes candidatas (mejor nota provisional primero)';
+      if (note) {
+        note.textContent = ready
+          ? plural(imdbPool.items.length, 'candidata', 'candidatas') + ' · ' +
+            checked + ' verificadas · máx. ' + IMDB_VERIFY_MAX
+          : '';
+      }
+      return;
+    }
+
+    const maxed = !!imdbPool && imdbPool.pages >= IMDB_NARROW_MAX_PAGES;
+    const addPages = maxed ? 0 : Math.min(1, IMDB_NARROW_MAX_PAGES - (imdbPool.pages || IMDB_NARROW_PAGES));
+    const addCount = addPages * IMDB_LENS_COUNT * IMDB_PAGE_SIZE;
     btn.disabled = !ready || maxed;
     btn.textContent = maxed
-      ? 'Máximo alcanzado (' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ')'
-      : '＋ Añadir ' + (addPages * IMDB_PAGE_SIZE) + ' candidatas';
+      ? 'Máximo alcanzado (' + (IMDB_NARROW_MAX_PAGES * IMDB_LENS_COUNT * IMDB_PAGE_SIZE) + ')'
+      : '＋ Añadir ' + addCount + ' candidatas';
     btn.title = maxed
-      ? 'Máximo alcanzado: ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ' candidatas para este ranking'
-      : 'Amplía el ranking con ' + (addPages * IMDB_PAGE_SIZE) +
+      ? 'Máximo alcanzado: ' + (IMDB_NARROW_MAX_PAGES * IMDB_LENS_COUNT * IMDB_PAGE_SIZE) + ' candidatas para este ranking'
+      : 'Amplía el ranking con ' + addCount +
         ' películas menos populares que cumplen los filtros y consulta sus notas en OMDb';
-    const note = $('rankMoreNote');
     if (note) {
       note.textContent = ready
-        ? plural(imdbPool.items.length, 'analizada', 'analizadas') + ' de TMDb · máx. ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE)
+        ? plural(imdbPool.items.length, 'analizada', 'analizadas') + ' de TMDb · máx. ' +
+          (IMDB_NARROW_MAX_PAGES * IMDB_LENS_COUNT * IMDB_PAGE_SIZE)
         : '';
     }
   }
@@ -1884,7 +1920,7 @@ try {
      candidatos con los filtros activos, se piden sus notas a OMDb (quedan en
      caché) y se ordenan y paginan aquí. */
   const RANK_KEY = 'cine.rank.v1';
-  let imdbPool = { sig: '', items: [], sourceTotal: 0, pages: IMDB_POOL_PAGES };
+  let imdbPool = { sig: '', items: [], sourceTotal: 0, pages: IMDB_NARROW_PAGES, wide: false, checked: 0 };
 
   function saveRankPool() {
     if (!imdbPool.sig || !imdbPool.items.length) return;
@@ -1893,6 +1929,8 @@ try {
         sig: imdbPool.sig,
         pages: imdbPool.pages,
         sourceTotal: imdbPool.sourceTotal,
+        wide: imdbPool.wide,
+        checked: imdbPool.checked,
         items: imdbPool.items
       }));
     } catch {}
@@ -1903,22 +1941,29 @@ try {
       if (!raw) return;
       const p = JSON.parse(raw);
       if (p && typeof p.sig === 'string' && Array.isArray(p.items) && p.items.length) {
+        const wide = !!p.wide;
         imdbPool = {
           sig: p.sig,
           items: p.items,
           sourceTotal: Number(p.sourceTotal) || 0,
-          pages: Math.min(IMDB_MAX_PAGES, Math.max(IMDB_POOL_PAGES, Number(p.pages) || IMDB_POOL_PAGES))
+          wide,
+          checked: Number(p.checked) || 0,
+          pages: wide
+            ? IMDB_LENS_PAGES
+            : Math.min(IMDB_NARROW_MAX_PAGES, Math.max(IMDB_NARROW_PAGES, Number(p.pages) || IMDB_NARROW_PAGES))
         };
       }
     } catch {}
   }
   function dropRankPool() {
-    imdbPool = { sig: '', items: [], sourceTotal: 0, pages: IMDB_POOL_PAGES };
+    imdbPool = { sig: '', items: [], sourceTotal: 0, pages: IMDB_NARROW_PAGES, wide: false, checked: 0 };
     session.del(RANK_KEY);
   }
 
   function imdbSignature(f) {
-    return JSON.stringify([f.q, f.year, f.genre, f.from, f.minVotes, f.exclusions]);
+    // La fuente de notas forma parte de la firma: un bloque preanalizado con
+    // MDBList no sirve si luego se usa solo OMDb, y al revés.
+    return JSON.stringify([f.q, f.year, f.genre, f.from, f.minVotes, f.exclusions, S.mdblist ? 'mdb' : 'omdb']);
   }
 
   function imdbInfoOf(id) {
@@ -1952,7 +1997,7 @@ try {
     return i;
   }
 
-  async function buildImdbCandidates(f, myId, pages = IMDB_POOL_PAGES) {
+  async function buildImdbCandidates(f, myId, pages = IMDB_NARROW_PAGES) {
     const minVotes = Math.max(f.minVotes, IMDB_MIN_VOTES);
     const withoutGenres = [];
     const withoutKeywords = [];
@@ -1986,21 +2031,35 @@ try {
     } else {
       const base = {
         language: LANG,
-        sort_by: 'popularity.desc',
-        include_adult: 'false',
-        'vote_count.gte': String(minVotes)
+        include_adult: 'false'
       };
       if (f.year) base.primary_release_year = f.year;
       else if (f.from) base['primary_release_date.gte'] = f.from + '-01-01';
       if (f.genre) base.with_genres = f.genre;
       if (withoutGenres.length) base.without_genres = withoutGenres.join(',');
       if (withoutKeywords.length) base.without_keywords = withoutKeywords.join(',');
-      for (let p = 1; p <= pages; p++) {
-        if (myId !== state.reqId) return null;
-        const d = await tmdb('/discover/movie', { ...base, page: p }, { ttl: TTL.list });
-        if (p === 1) sourceTotal = d.total_results || 0;
-        addAll(d);
-        if (!d.results || d.results.length < IMDB_PAGE_SIZE) break;
+
+      // Tres lentes: lo más popular, lo mejor valorado y lo más votado. TMDb
+      // no ordena por IMDb, así que cuanta más variedad entre en el bloque,
+      // más probable es que la mejor película esté dentro. La nota de TMDb solo
+      // sirve para elegir candidatas: el orden final siempre es la de IMDb.
+      const lenses = [
+        { sort_by: 'popularity.desc', min: minVotes },
+        // Con 500 votos TMDb entran estrenos con 9,5 y cuatro votos; 1.000
+        // sigue dejando cine de autor y quita casi todo el ruido.
+        { sort_by: 'vote_average.desc', min: Math.max(minVotes, 1000) },
+        { sort_by: 'vote_count.desc', min: minVotes }
+      ];
+
+      for (const lens of lenses) {
+        const params = { ...base, sort_by: lens.sort_by, 'vote_count.gte': String(lens.min) };
+        for (let p = 1; p <= pages; p++) {
+          if (myId !== state.reqId) return null;
+          const d = await tmdb('/discover/movie', { ...params, page: p }, { ttl: TTL.list });
+          if (p === 1) sourceTotal = Math.max(sourceTotal, d.total_results || 0);
+          addAll(d);
+          if (!d.results || d.results.length < IMDB_PAGE_SIZE) break;
+        }
       }
     }
 
@@ -2014,8 +2073,79 @@ try {
     return { items: pool, sourceTotal };
   }
 
-  async function ensureImdbRatings(list, myId) {
-    if (!S.omdb) return { fatal: false };
+  /* MDBList devuelve la nota IMDb de 10 películas por petición, pero sin votos.
+     Sirve para ordenar la cola de verificación: OMDb confirma votos y decide si
+     la nota es fiable. Si MDBList falla, se sigue con el orden de TMDb. */
+  async function mdblistPreRank(list, myId) {
+    if (!S.mdblist) return { ok: false, count: 0 };
+    if (!imdbCache) imdbCache = readImdbCache();
+    const now = Date.now();
+    const need = [];
+    const seen = new Set();
+    list.forEach((m) => {
+      const key = String(m.id);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const c = imdbCache[key];
+      if (c && c.rating && now - c.ts < imdbTtlOf(c)) return;
+      need.push(key);
+    });
+    if (!need.length) return { ok: true, count: 0 };
+
+    const queue = [];
+    for (let i = 0; i < need.length; i += MDB_BATCH_SIZE) queue.push(need.slice(i, i + MDB_BATCH_SIZE));
+    const chunksTotal = queue.length;
+    const total = need.length;
+    let done = 0;
+    let failures = 0;
+    let asked = 0;
+    let aborted = false;
+
+    setAux('Preanalizando notas IMDb: 0/' + total + '…');
+
+    const worker = async () => {
+      while (queue.length && !aborted) {
+        if (myId !== state.reqId) return;
+        const chunk = queue.shift();
+        asked++;
+        try {
+          const body = new URLSearchParams();
+          chunk.forEach((id) => body.append('ids', id));
+          body.append('provider', 'tmdb');
+          // Formulario en vez de JSON: es una petición «simple» y evita el
+          // preflight CORS, que la API no responde bien (405).
+          const res = await fetchTimeout(API.MDBLIST_BATCH + '?apikey=' + encodeURIComponent(S.mdblist), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+          });
+          if (res.status === 401 || res.status === 403) { aborted = true; failures = chunksTotal; return; }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          (data.ratings || []).forEach((r) => {
+            if (!r || r.rating == null) return;
+            const v = Number(r.rating);
+            if (!isFinite(v) || v <= 0) return;
+            imdbCache[String(r.id)] = { rating: v, votes: null, via: 'mdblist', ts: Date.now() };
+          });
+        } catch (err) {
+          failures++;
+        }
+        done += chunk.length;
+        if (myId === state.reqId) {
+          setAux('Preanalizando notas IMDb: ' + Math.min(done, total) + '/' + total + '…');
+        }
+      }
+    };
+
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    saveImdbCache();
+    // Si falla la mayoría (clave sin permiso, sin red, límite), no se usa como fuente.
+    return { ok: asked > 0 && failures < asked, count: done };
+  }
+
+  async function ensureImdbRatings(list, myId, limit) {
+    if (!S.omdb) return { fatal: false, checked: 0 };
     if (!imdbCache) imdbCache = readImdbCache();
     const now = Date.now();
     const missing = [];
@@ -2031,17 +2161,21 @@ try {
       const needsMeta = !!(c && c.rating && (c.votes == null || !c.via));
       if (!fresh || needsMeta) missing.push(m);
     });
-    if (!missing.length) return { fatal: false };
+    if (!missing.length) return { fatal: false, checked: 0 };
 
-    const total = missing.length;
+    // Se verifica en el orden recibido (con MDBList, de mejor a peor nota
+    // provisional) y se puede limitar la tanda para no gastar cuota de más.
+    const queue = typeof limit === 'number' ? missing.slice(0, Math.max(0, limit)) : missing.slice();
+    if (!queue.length) return { fatal: false, checked: 0 };
+    const total = queue.length;
     let done = 0;
     let fatal = false;
     setAux('Consultando notas IMDb: 0/' + total + '…');
 
     const worker = async () => {
-      while (missing.length && !fatal) {
+      while (queue.length && !fatal) {
         if (myId !== state.reqId) return;
-        const m = missing.shift();
+        const m = queue.shift();
         let found = null;
         try {
           found = await imdbLookupOnce(m);
@@ -2052,6 +2186,7 @@ try {
           rating: found ? found.rating : null,
           votes: found ? found.votes : 0,
           via: found ? found.via : '',
+          checked: true,
           ts: Date.now()
         };
         if (found && found.via === 'id') applyImdb(String(m.id), found.rating);
@@ -2064,7 +2199,35 @@ try {
 
     await Promise.all([worker(), worker(), worker(), worker()]);
     saveImdbCache();
-    return { fatal };
+    return { fatal, checked: done };
+  }
+
+  /** Nota provisional (puede venir de MDBList) para ordenar la cola de OMDb. */
+  function provRating(m) {
+    const i = imdbInfoOf(m.id);
+    return i ? i.rating : -1;
+  }
+
+  /** ¿Se ha consultado ya esta película en OMDb? */
+  function imdbChecked(id) {
+    const c = imdbCache && imdbCache[String(id)];
+    return !!(c && (c.checked === true || c.via === 'id'));
+  }
+
+  /** Verifica por tandas hasta tener al menos una página de notas fiables. */
+  async function verifyRankSteps(pool, myId, maxCount) {
+    let checked = 0;
+    let fatal = false;
+    while (checked < maxCount) {
+      const r = await ensureImdbRatings(pool, myId, IMDB_VERIFY_STEP);
+      if (!r) break;
+      checked += r.checked || 0;
+      fatal = fatal || !!r.fatal;
+      if (fatal || myId !== state.reqId) break;
+      if (!r.checked) break;
+      if (pool.filter((m) => !!imdbRankInfo(m)).length >= IMDB_PAGE_SIZE) break;
+    }
+    return { fatal, checked };
   }
 
   async function renderImdbRank(f, myId) {
@@ -2072,23 +2235,33 @@ try {
     let pool;
     let sourceTotal;
     let pages;
+    let wide = !!S.mdblist && !!S.omdb;
     let fatal = false;
+    let preFailed = false;
 
     if (imdbPool.sig === sig && imdbPool.items.length) {
       pool = imdbPool.items.slice();
       sourceTotal = imdbPool.sourceTotal;
       pages = imdbPool.pages;
-      // Autocuración: si falta alguna nota (caché borrada), se recupera.
-      const r = await ensureImdbRatings(pool, myId);
+      wide = !!imdbPool.wide;
+      // Autocuración: solo se recuperan las notas que ya estaban consultadas
+      // (si se borró la caché), sin ampliar el bloque por sorpresa.
+      const target = Math.max(0, imdbPool.checked || 0);
+      const fresh = pool.slice(0, target).filter((m) => imdbChecked(m.id)).length;
+      const r = await ensureImdbRatings(pool, myId, Math.max(0, target - fresh));
       fatal = !!(r && r.fatal);
       if (myId !== state.reqId) return;
+      // Recalculado, no solo sumado: corrige bloques guardados por versiones
+      // anteriores (sin `checked`) y cualquier deriva de la caché.
+      imdbPool.checked = pool.filter((m) => imdbChecked(m.id)).length;
+      saveRankPool();
     } else {
       setStatus('Reuniendo candidatos para el ranking IMDb…');
-      const built = await buildImdbCandidates(f, myId, IMDB_POOL_PAGES);
+      pages = wide ? IMDB_LENS_PAGES : IMDB_NARROW_PAGES;
+      const built = await buildImdbCandidates(f, myId, pages);
       if (!built || myId !== state.reqId) return;
       pool = built.items;
       sourceTotal = built.sourceTotal;
-      pages = IMDB_POOL_PAGES;
       if (!pool.length) {
         renderGrid([], 'No hay películas con estos filtros.');
         state.totalPages = 1;
@@ -2100,10 +2273,36 @@ try {
         writeParams();
         return;
       }
-      const r2 = await ensureImdbRatings(pool, myId);
-      fatal = fatal || !!(r2 && r2.fatal);
+
+      if (wide) {
+        const pre = await mdblistPreRank(pool, myId);
+        if (myId !== state.reqId) return;
+        if (!pre.ok) {
+          // Sin MDBList no se puede preordenar un bloque grande: se recorta a
+          // las 60 primeras para no gastar cuota de OMDb a ciegas.
+          pool = pool.slice(0, IMDB_LENS_COUNT * IMDB_PAGE_SIZE);
+          pages = IMDB_NARROW_PAGES;
+          wide = false;
+          preFailed = true;
+        } else {
+          // La cola de verificación va de mejor a peor nota provisional.
+          pool.sort((a, b) => provRating(b) - provRating(a) || (b.vote_count || 0) - (a.vote_count || 0));
+        }
+      }
+
+      const r2 = wide
+        ? await verifyRankSteps(pool, myId, IMDB_AUTO_VERIFY)
+        : await ensureImdbRatings(pool, myId);
+      fatal = !!(r2 && r2.fatal);
       if (myId !== state.reqId) return;
-      imdbPool = { sig, items: pool.slice(), sourceTotal, pages };
+      imdbPool = {
+        sig,
+        items: pool.slice(),
+        sourceTotal,
+        pages,
+        wide,
+        checked: pool.filter((m) => imdbChecked(m.id)).length
+      };
       saveRankPool();
     }
 
@@ -2120,15 +2319,19 @@ try {
     });
 
     const withRating = rated.filter((m) => !!imdbRankInfo(m));
-    const excluded = rated.length - withRating.length;
+    const consulted = pool.filter((m) => imdbChecked(m.id)).length;
+    const excluded = consulted - withRating.length;
+    const unverified = pool.length - consulted;
 
     if (!withRating.length) {
       // Sin notas verificadas no se puede presentar el orden de TMDb como ranking IMDb.
       state.totalPages = 1;
       state.page = 1;
       renderGrid([], 'IMDb todavía no tiene notas fiables para estas ' +
-        plural(pool.length, 'candidata', 'candidatas') +
-        '. Añade más candidatas, quita filtros o revisa la clave de OMDb.');
+        plural(consulted, 'candidata consultada', 'candidatas consultadas') +
+        (unverified
+          ? '. Prueba a verificar más candidatas abajo o revisa la clave de OMDb.'
+          : '. Añade más candidatas, quita filtros o revisa la clave de OMDb.'));
       updatePagination();
       setStatus('Sin notas IMDb fiables todavía');
       setAux('Solo se rankean notas verificadas por el ID de TMDb con al menos ' + IMDB_RANK_MIN_VOTES +
@@ -2172,6 +2375,7 @@ try {
 
     const extras = [];
     if (excluded) extras.push(plural(excluded, 'sin nota fiable', 'sin nota fiable'));
+    if (unverified) extras.push(plural(unverified, 'sin verificar', 'sin verificar'));
     if (hiddenByWatch) extras.push(plural(hiddenByWatch, 'oculta por vista', 'ocultas por vistas'));
     const suffix = extras.length ? ' · ' + extras.join(' · ') : '';
 
@@ -2184,12 +2388,19 @@ try {
       : '';
     if (fatal) {
       setAux('OMDb rechazó la clave o se agotó el límite diario: el ranking se completa con las notas ya guardadas.', 'error');
+    } else if (preFailed) {
+      setAux('MDBList no respondió: el ranking se calcula con las 60 primeras candidatas. Revisa la clave de MDBList.' + reliability, 'warn');
+    } else if (wide) {
+      setAux('Bloque de ' + plural(pool.length, 'candidata', 'candidatas') +
+        ' de TMDb (más populares, mejor valoradas y más votadas). ' +
+        plural(consulted, 'consultada', 'consultadas') + ' en OMDb' +
+        (unverified ? '; quedan ' + unverified + ' por verificar.' : '.') + reliability);
     } else if (sourceTotal && sourceTotal > pool.length) {
-      setAux((pages >= IMDB_MAX_PAGES
-        ? 'Ranking calculado sobre las ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) +
-          ' candidatas máximas de TMDb (las más populares con estos filtros).'
+      setAux((pages >= IMDB_NARROW_MAX_PAGES
+        ? 'Ranking calculado sobre las ' + (IMDB_NARROW_MAX_PAGES * IMDB_LENS_COUNT * IMDB_PAGE_SIZE) +
+          ' candidatas máximas de TMDb (populares, mejor valoradas y más votadas).'
         : 'Ranking calculado sobre ' + plural(pool.length, 'película', 'películas') +
-          ' de TMDb (las más populares con estos filtros). Puedes añadir más candidatas abajo.') + reliability);
+          ' de TMDb (populares, mejor valoradas y más votadas). Puedes añadir más candidatas abajo.') + reliability);
     } else {
       setAux('Ranking IMDb de ' + plural(pool.length, 'película', 'películas') + '.' + reliability);
     }
@@ -2198,25 +2409,45 @@ try {
   async function expandImdbRank() {
     const f = filters();
     if (f.sort.indexOf('imdb.') !== 0 || !imdbPool.sig) return;
-    if (imdbPool.pages >= IMDB_MAX_PAGES) return;
 
-    const addPages = Math.min(3, IMDB_MAX_PAGES - imdbPool.pages);
-    const addCount = addPages * IMDB_PAGE_SIZE;
-    const ok = window.confirm(
-      'Se añadirán hasta ' + addCount + ' candidatas más y se consultarán como máximo ' +
-      addCount + ' notas nuevas a OMDb (la cuota gratuita es de 1.000 al día). ¿Continuar?'
-    );
-    if (!ok) return;
+    const maxVerify = Math.min(imdbPool.items.length, IMDB_VERIFY_MAX);
+    if (imdbPool.wide && imdbPool.checked >= maxVerify) return;
+    if (!imdbPool.wide && imdbPool.pages >= IMDB_NARROW_MAX_PAGES) return;
 
     const myId = ++state.reqId;
+    const step = Math.max(0, Math.min(IMDB_VERIFY_STEP, maxVerify - (imdbPool.checked || 0)));
+    const addPages = imdbPool.wide ? 0 : Math.min(1, IMDB_NARROW_MAX_PAGES - imdbPool.pages);
+    const addCount = addPages * IMDB_LENS_COUNT * IMDB_PAGE_SIZE;
+
+    const ok = imdbPool.wide
+      ? window.confirm('Se verificarán en OMDb las ' + step + ' siguientes candidatas de ' +
+          plural(imdbPool.items.length, 'candidata preanalizada', 'candidatas preanalizadas') +
+          ' con MDBList. La cuota gratuita de OMDb es de 1.000 al día. ¿Continuar?')
+      : window.confirm('Se añadirán hasta ' + addCount + ' candidatas más y se consultarán como máximo ' +
+          addCount + ' notas nuevas a OMDb (la cuota gratuita es de 1.000 al día). ¿Continuar?');
+    if (!ok) return;
+
     setBusy(true);
     $('movieGrid').classList.add('busy');
     $('rankMoreBtn').disabled = true;
-    $('rankMoreBtn').textContent = 'Ampliando…';
-    setStatus('Ampliando el ranking IMDb…');
-    setAux('Buscando ' + addCount + ' candidatas más en TMDb…');
+    $('rankMoreBtn').textContent = imdbPool.wide ? 'Verificando…' : 'Ampliando…';
+    setStatus(imdbPool.wide ? 'Verificando candidatas en OMDb…' : 'Ampliando el ranking IMDb…');
+    setAux(imdbPool.wide ? 'Consultando las siguientes notas IMDb…' : 'Buscando ' + addCount + ' candidatas más en TMDb…');
 
     try {
+      if (imdbPool.wide) {
+        const r = await ensureImdbRatings(imdbPool.items, myId, step);
+        if (myId !== state.reqId) return;
+        imdbPool.checked = imdbPool.items.filter((m) => imdbChecked(m.id)).length;
+        saveRankPool();
+        await renderImdbRank(f, myId);
+        if (r && r.fatal && myId === state.reqId) {
+          setAux('OMDb rechazó la clave o se agotó el límite diario: el ranking se completa con las notas ya guardadas.', 'error');
+        }
+        return;
+      }
+
+      // Sin MDBList: se amplía el bloque de TMDb y se verifica lo nuevo.
       const built = await buildImdbCandidates(f, myId, imdbPool.pages + addPages);
       if (!built || myId !== state.reqId) return;
       const r = await ensureImdbRatings(built.items, myId);
@@ -2226,7 +2457,9 @@ try {
         sig: imdbSignature(f),
         items: built.items.slice(),
         sourceTotal: built.sourceTotal,
-        pages: imdbPool.pages + addPages
+        pages: imdbPool.pages + addPages,
+        wide: false,
+        checked: built.items.filter((m) => imdbChecked(m.id)).length
       };
       saveRankPool();
       await renderImdbRank(f, myId);

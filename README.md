@@ -17,13 +17,15 @@ proxies y sin subir tus claves a ningún servidor.
 2. Pega tu **API Key de TMDb** (obligatoria) y guarda.
    - v3: clave de 32 caracteres → viaja como `api_key` en la URL de la API.
    - v4: *Read Access Token* (`eyJ…`) → viaja en la cabecera `Authorization` (mejor).
-3. Opcional: añade OMDb, MDBList y Trakt desde el mismo panel.
+3. Opcional: añade OMDb, MDBList y Trakt desde el mismo panel. OMDb es necesario para
+   el ranking IMDb; **MDBList es muy recomendable** porque multiplica por cuatro el bloque
+   de candidatas que se puede ordenar por nota IMDb.
 
 | Servicio | Para qué | Dónde se obtiene |
 |---|---|---|
 | **TMDb** | Catálogo, búsqueda, detalles, reparto, plataformas | https://www.themoviedb.org/settings/api |
 | **OMDb** | Nota IMDb en las tarjetas y puntuaciones extra | https://www.omdbapi.com/apikey.aspx |
-| **MDBList** | RT, Metacritic, Letterboxd, Trakt, MAL… | https://mdblist.com/preferences/ |
+| **MDBList** | RT, Metacritic, Letterboxd, Trakt, MAL… y preanálisis de notas IMDb | https://mdblist.com/preferences/ |
 | **Trakt** | Vistas, notas personales, «solo no vistas» | https://trakt.tv/oauth/applications |
 
 ### Configurar Trakt
@@ -123,16 +125,25 @@ proxies y sin subir tus claves a ningún servidor.
   ficha no pueden mostrar 8,7 y 7,1 a la vez. Las notas con pocos votos se refrescan cada 30
   minutos porque son las que más se mueven (estrenos).
 - «✓ Vista», «★ tu nota» y corazón de watchlist en la tarjeta.
-- **Orden por nota IMDb** (`Nota IMDb mejor → peor` / `peor → mejor`): ranking local sobre las
-  **60 películas más populares** que cumplen los filtros (3 páginas de TMDb), con paginación de
-  20 en 20. Si no hay clave de OMDb, las opciones aparecen deshabilitadas.
+- **Orden por nota IMDb** (`Nota IMDb mejor → peor` / `peor → mejor`): ranking local sobre
+  un bloque de candidatas que cumplen los filtros, con paginación de 20 en 20. Si no hay clave
+  de OMDb, las opciones aparecen deshabilitadas.
+- **Tres lentes de candidatas**: TMDb no ordena por IMDb, así que el bloque se reúne con tres
+  consultas distintas —lo **más popular**, lo **mejor valorado** (≥ 1.000 votos TMDb) y lo
+  **más votado**— y se deduplica. Sin MDBList son 60 candidatas; con MDBList, 4 páginas por
+  lente hasta **240**.
+- **Preanálisis con MDBList**: cuando hay clave de MDBList y de OMDb, se piden las notas IMDb
+  de las 240 candidatas en lotes de 10 (`POST /rating/movie/imdb`), sin gastar OMDb. Esas notas
+  no se muestran: solo ordenan la cola de verificación para que OMDb confirme primero las que
+  más probabilidades tienen de ser fiables. Si MDBList falla (clave inválida, sin red), el
+  bloque se recorta a 60 candidatas y se avisa; el ranking nunca se rompe.
 - **Solo notas fiables**: solo entran en el ranking las notas que OMDb devuelve **por el
   `imdb_id` de TMDb** y con **al menos 500 votos** en IMDb. Las demás (estrenos recién
   publicados, títulos que solo coinciden por nombre o con nota inflada por pocos votos) no
   aparecen en la lista y se cuentan como «sin nota fiable». Es lo que evita que un estreno de
   2026 con 120 votos se cuele como «mejor película». Si **ninguna** candidata supera ese
   criterio, la app no disfraza el orden de TMDb: deja la rejilla con un aviso y el botón para
-  añadir candidatas, en lugar de mostrar una lista que parezca un ranking.
+  verificar más candidatas, en lugar de mostrar una lista que parezca un ranking.
 - **«Solo no vistas»**: oculta las películas que ya figuran en tu historial de Trakt. Se aplica
   al pintar, sin volver a pedir datos, así que se puede activar y desactivar al instante; el
   contador indica cuántas se han ocultado.
@@ -141,13 +152,14 @@ proxies y sin subir tus claves a ningún servidor.
   ensuciar el historial y sin perder los filtros activos; atrás/adelante abre o cierra la ficha.
 - **Nota IMDb mínima** (6,0 / 7,0 / 7,5 / 8,0 / 8,5): aparece solo en modo ranking y filtra
   **en el cliente**, sin hacer ni una petición. El contador y la paginación se recalculan.
-- **Ampliar el ranking (botón «＋ Añadir 60 candidatas»)**: TMDb no sabe ordenar por IMDb, así
-  que el ranking se calcula sobre las **60 películas más populares** que cumplen los filtros.
-  Si la que buscas es menos popular, no está en ese bloque. Este botón pide las **60
-  siguientes** por popularidad (páginas 4-6 de TMDb) y sus notas a OMDb, y luego otras 60
-  (hasta 180). No cambia los filtros ni el orden: solo amplía la lista de candidatas para que
-  entren películas menos populares. Antes de gastar cuota avisa con un `confirm()` indicando
-  cuántas consultas hará; al llegar a 180 queda como «Máximo alcanzado».
+- **Verificar más candidatas (botón del final del ranking)**: TMDb no sabe ordenar por IMDb,
+  así que siempre se trabaja sobre un bloque. Con MDBList, el botón dice «＋ Verificar 60 más»
+  y consulta en OMDb las siguientes 60 candidatas **mejor situadas por la nota provisional**,
+  sin volver a pedir nada a TMDb. La primera carga verifica 120 y se puede llegar a
+  **240**; al terminar queda como «Todo verificado (240)». Sin MDBList el bloque es de 60 y el
+  botón dice «＋ Añadir 60 candidatas»: pide las 60 siguientes a TMDb (hasta 180) y consulta
+  sus notas. En ambos casos avisa con un `confirm()` de cuántas consultas hará antes de gastar
+  cuota, y el estado separa «sin nota fiable» de «sin verificar».
   El bloque se guarda en `sessionStorage` (`cine.rank.v1`), así que **cambiar de página, de
   dirección, de nota mínima o activar «Solo no vistas» no vuelve a pedir nada**, ni siquiera
   tras recargar la pestaña.
@@ -184,18 +196,27 @@ proxies y sin subir tus claves a ningún servidor.
   con tokens y no se hace desde un archivo local).
 - **El ranking IMDb no cubre todo el catálogo**: TMDb solo ordena por sus propios campos (nota
   media, popularidad, fecha…). El orden por IMDb se calcula en local sobre un bloque de
-  **60 candidatos ampliable a 120 y 180** (3, 6 y 9 páginas de 20) que cumplen los filtros y
-  tienen al menos **100 votos** en TMDb. Para entrar en el ranking, la nota debe venir del
-  `imdb_id` de TMDb y tener **≥ 500 votos en IMDb**; el resto se descarta y se cuenta aparte.
-  No es un ranking global de IMDb, sino de esas 60–180 películas.
+  **60 candidatas sin MDBList (ampliable a 180) o 240 con MDBList**, reunidas con tres lentes
+  (más populares, mejor valoradas y más votadas) que cumplen los filtros y tienen al menos
+  **100 votos** en TMDb. Para entrar en el ranking, la nota debe venir del `imdb_id` de TMDb y
+  tener **≥ 500 votos en IMDb**; el resto se descarta y se cuenta aparte. No es un ranking
+  global de IMDb, sino el de esas 60–240 películas.
+- **MDBList no tiene cuota para su catálogo**: su endpoint `GET /catalog/movie?sort=imdbrating`
+  sí devuelve un ranking IMDb con votos, pero el plan gratuito permite **4 peticiones cada 7
+  días**, así que no sirve como fuente principal. Por eso se usa el lote
+  `POST /rating/movie/imdb` (10 IDs por petición): da la nota sin votos y se gasta cuota de
+  MDBList, no de OMDb; OMDb sigue confirmando los votos. Además, ese lote debe enviarse como
+  formulario (`application/x-www-form-urlencoded`): con JSON, el preflight CORS devuelve 405.
 - **Coste del ranking en OMDb**: se pide primero el `imdb_id` a TMDb y luego **una sola consulta
-  a OMDb por película** (las 20 de la página visible ya suelen estar en caché). La primera vez
-  son ~60 consultas; cada ampliación añade hasta 60 más; después, 0 mientras la caché siga
-  vigente. Con 1.000 consultas diarias gratuitas da para bastantes ampliaciones.
+  a OMDb por película**. La primera carga con MDBList verifica 120 candidatas; cada pulsación de
+  «Verificar 60 más» añade 60 hasta 240. Sin MDBList son ~60 consultas iniciales y hasta 180.
+  Después, 0 mientras la caché siga vigente. Con 1.000 consultas diarias gratuitas da para
+  bastantes tandas.
 - **Filtro de nota mínima**: se aplica sobre las candidatas ya reunidas, no sobre todo IMDb. Si
-  con 8,0 salen pocas, la app sugiere bajar la nota o ampliar el bloque.
+  con 8,0 salen pocas, la app sugiere bajar la nota o verificar más candidatas.
 - TMDb no devuelve más de **500 páginas** (10.000 resultados) por búsqueda.
-- OMDb gratis: **1.000 consultas/día**. Si se agota, la app lo detecta y deja de insistir.
+- OMDb gratis: **1.000 consultas/día**; MDBList gratis: **1.000 peticiones/día** (cada lote de
+  10 IDs cuenta como una). Si se agotan, la app lo detecta y deja de insistir.
 - La búsqueda de TMDb no acepta `with_genres`, así que género, año y votos se filtran en el
   cliente para los resultados de búsqueda (los contadores lo indican).
 - Las imágenes vienen de `image.tmdb.org`; si TMDb cambia el CDN hay que ajustar `API.IMG`.
@@ -226,10 +247,30 @@ cinecatalogo/
 - Ranking IMDb probado con 45 películas simuladas: orden descendente y ascendente correctos,
   «Página 2» y el cambio de dirección **sin peticiones nuevas** (0 a OMDb y a TMDb), 45
   entradas en `cine.imdb.v3` y 1 consulta a OMDb por película.
-- Ranking ampliado con 120 y 180 candidatas: `imdbMin=8` dejó 20 tarjetas **con 0 peticiones**;
-  «Añadir 60 candidatas» hizo exactamente 3 `discover` + 60 consultas OMDb por bloque; el botón
-  pasa por «Ampliando…» y termina en «Máximo alcanzado (180)» deshabilitado, con un clic
-  posterior sin efecto.
+- **Ranking ampliado sin MDBList**: `imdbMin=8` dejó 20 tarjetas **con 0 peticiones**;
+  «Añadir 60 candidatas» hizo exactamente 1 página por lente + 60 consultas OMDb por bloque; el
+  paso de 60 a 120 se completó con 0 consultas de lote y el botón quedó en «＋ Añadir 60
+  candidatas» con la nota «120 analizadas de TMDb · máx. 180».
+- **Ranking ampliado con MDBList (flujo completo)**: 240 candidatas de 12 `discover` (3 lentes ×
+  4 páginas) → 24 lotes a MDBList (240 IDs) → 120 verificaciones OMDb; quedaron **33 notas
+  fiables**, la primera tarjeta fue 9,8 y el estado decía «33 ordenadas · 87 sin nota fiable ·
+  120 sin verificar». «Verificar 60 más» añadió exactamente 60 consultas OMDb y **0 de lote**;
+  al llegar a 240 el botón quedó «Todo verificado (240)» deshabilitado y el estado pasó a «60
+  ordenadas · 180 sin nota fiable». Recargar con el pool guardado hizo **0 peticiones** y
+  conservó las 240 candidatas y las 180 verificadas.
+- **Fallback de MDBList**: con MDBList devolviendo 401, se hicieron 4 intentos, el bloque se
+  recortó a 60 candidatas y apareció «MDBList no respondió: el ranking se calcula con las 60
+  primeras candidatas»; el botón volvió a «＋ Añadir 60 candidatas» y el ranking siguió
+  funcionando.
+- **Sin clave de MDBList**: 60 candidatas, **0 lotes**, 40 consultas OMDb y ampliación a 120
+  correcta (la lente de mejor valoradas exige 1.000 votos TMDb).
+- **Estado vacío del modo amplio**: con todas las candidatas por debajo de 500 votos, 0
+  tarjetas, aviso «Prueba a verificar más candidatas abajo» y botón «＋ Verificar 60 más»
+  disponible; no se mostró el orden de TMDb.
+- **Lote real de MDBList desde el navegador**: `POST /rating/movie/imdb` con la clave real
+  devolvió **200** y las notas correctas (Matrix 8,8; El padrino 9,1; Origen 8,7), enviado como
+  formulario y **sin preflight**. La prueba se hizo desde `http://127.0.0.1` y la clave no se
+  escribió en ningún archivo del repositorio.
 - **Persistencia probada en frío**: pool de 60 guardado, recarga completa sin la API simulada
   (clave inválida) y el ranking se pintó con **20 tarjetas y 20 notas IMDb, 0 peticiones**.
 - La nota mínima y el bloque de ampliación se ocultan al entrar en la watchlist y reaparecen al
@@ -255,9 +296,9 @@ cinecatalogo/
   como IMDb; la tarjeta mostró TMDb y se volvió a consultar por ID hasta obtener 8,8 verificado.
 - **Notas 0-100 de MDBList**: TMDb 69 y Trakt 70 se mostraron como 6,9 y 7,0; el 87 de IMDb de
   MDBList no pisó el 7,1 de OMDb.
-- **Sin notas fiables**: con todas las candidatas por debajo de 500 votos, la rejilla quedó
-  vacía (0 tarjetas) con el aviso y el botón «＋ Añadir 60 candidatas» disponible; no se mostró
-  el orden de TMDb.
+- **Sin notas fiables (sin MDBList)**: con todas las candidatas por debajo de 500 votos, la
+  rejilla quedó vacía (0 tarjetas) con el aviso y el botón «＋ Añadir 60 candidatas» disponible;
+  no se mostró el orden de TMDb.
 - **«Solo no vistas» dentro del ranking**: activarlo ocultó 2 películas vistas y repintó con
   **0 peticiones**; el estado pasó a «57 películas … · 2 ocultas por vistas».
 - **Auto-sincronización de Trakt**: con la caché de 5 minutos, al volver a la pestaña se
