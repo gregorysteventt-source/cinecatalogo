@@ -1,0 +1,3409 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="CineCatálogo: explora películas con TMDb, filtra por género, año y votos, guarda tu watchlist y sincroniza tus vistas y notas de Trakt. Todo en tu navegador, sin servidores intermedios.">
+<meta name="theme-color" content="#0b0d12">
+<meta name="referrer" content="no-referrer">
+<link rel="preconnect" href="https://image.tmdb.org" crossorigin>
+<link rel="preconnect" href="https://api.themoviedb.org" crossorigin>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https://image.tmdb.org data:; connect-src https://api.themoviedb.org https://www.omdbapi.com https://api.mdblist.com https://api.trakt.tv; base-uri 'none'; form-action 'none'">
+<title>CineCatálogo · Watchlist + Trakt</title>
+<script>
+/* Evita el destello de tema antes de pintar (CSP permite inline). */
+try {
+  var s = JSON.parse(localStorage.getItem('cine.settings.v2') || sessionStorage.getItem('cine.settings.v2') || '{}');
+  if (s && s.theme === 'light') document.documentElement.dataset.theme = 'light';
+} catch (e) {}
+</script>
+<style>
+  :root {
+    --bg: #0b0d12; --bg-soft: #0f1219; --surface: #14171f; --surface-2: #1c2029;
+    --border: #2a2f3a; --border-soft: #222631;
+    --text: #e9ecf1; --dim: #98a2b3;
+    --accent: #f5c518; --danger: #ff5c6c; --ok: #35d07f;
+    --tmdb: #01b4e4; --trakt: #ed1c24; --imdb: #f5c518; --heart: #ff4d6d;
+    --radius: 14px; --radius-sm: 10px;
+    --shadow: 0 18px 45px rgba(0,0,0,.45);
+    --ring: 0 0 0 3px rgba(245,197,24,.28);
+    --sticky-bg: rgba(20,23,31,.86);
+    color-scheme: dark;
+  }
+  html[data-theme="light"] {
+    --bg: #f5f6fa; --bg-soft: #eef0f6; --surface: #ffffff; --surface-2: #f0f2f7;
+    --border: #d7dce6; --border-soft: #e4e8f0;
+    --text: #101521; --dim: #5b6474;
+    --danger: #d92b45; --ok: #0f9d58;
+    --shadow: 0 18px 40px rgba(16,21,33,.12);
+    --sticky-bg: rgba(255,255,255,.88);
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: none; box-shadow: var(--ring); border-radius: 8px; }
+  .hidden { display: none !important; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+
+  /* ---------- HEADER ---------- */
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 16px; flex-wrap: wrap;
+    padding: 18px clamp(16px, 4vw, 40px);
+    border-bottom: 1px solid var(--border-soft);
+    background: linear-gradient(180deg, var(--surface), var(--bg));
+  }
+  .brand h1 { font-size: clamp(1.25rem, 2.2vw, 1.6rem); letter-spacing: -.02em; }
+  .brand p { color: var(--dim); font-size: .85rem; margin-top: 3px; }
+  .brand .tag {
+    font-size: .66rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--accent); background: rgba(245,197,24,.12);
+    border: 1px solid rgba(245,197,24,.32);
+    padding: 2px 7px; border-radius: 999px; margin-left: 8px; vertical-align: middle;
+  }
+  .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 14px;
+    font-size: .88rem; font-weight: 600; cursor: pointer;
+    transition: background .16s, border-color .16s, transform .16s;
+  }
+  .btn:hover { background: var(--border-soft); border-color: var(--dim); }
+  .btn:active { transform: translateY(1px); }
+  .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: rgba(245,197,24,.1); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #161200; }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn.primary:disabled { opacity: .55; cursor: progress; }
+  .btn.icon { padding: 10px; width: 42px; justify-content: center; }
+  .btn.ghost { background: transparent; }
+  .count {
+    min-width: 20px; padding: 1px 6px; border-radius: 999px;
+    background: var(--border); color: var(--text);
+    font-size: .72rem; font-weight: 800; text-align: center;
+  }
+  .btn[aria-pressed="true"] .count { background: var(--accent); color: #161200; }
+
+  main { flex: 1; width: 100%; max-width: 1620px; margin: 0 auto; padding: clamp(16px, 3vw, 28px) clamp(16px, 4vw, 40px) 64px; }
+
+  /* ---------- TRAKT BAR ---------- */
+  .trakt-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 14px; padding: 10px 14px;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-left: 3px solid var(--trakt); border-radius: var(--radius-sm);
+    font-size: .84rem; color: var(--dim);
+  }
+  .trakt-bar strong { color: var(--text); font-weight: 700; }
+  .trakt-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: 0 0 auto; }
+  .trakt-bar.ok .dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(53,208,127,.16); }
+  .trakt-bar.err .dot { background: var(--danger); }
+  .trakt-bar .spacer { flex: 1; }
+  .link-btn {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: .82rem; font-weight: 700; padding: 4px 6px; border-radius: 6px;
+  }
+  .link-btn:hover { text-decoration: underline; }
+  .link-btn:disabled { color: var(--dim); cursor: default; text-decoration: none; }
+
+  /* ---------- FILTERS ---------- */
+  .filters {
+    position: sticky; top: 0; z-index: 40;
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    padding: 14px;
+    background: var(--sticky-bg);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border: 1px solid var(--border-soft); border-radius: var(--radius);
+    box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    margin-bottom: 12px;
+  }
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field.wide { grid-column: span 2; }
+  .field label {
+    font-size: .68rem; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--dim); font-weight: 700;
+  }
+  select, input[type="text"], input[type="search"], input[type="number"], input[type="password"] {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px; font-size: .92rem;
+    outline: none; transition: border-color .16s, background .16s;
+  }
+  select { cursor: pointer; }
+  select:hover, input:hover { border-color: var(--dim); }
+  select:focus, input:focus { border-color: var(--accent); }
+  .search-wrap { position: relative; }
+  .search-wrap input { padding-right: 38px; }
+  .search-wrap input::-webkit-search-cancel-button { display: none; }
+  .clear-btn {
+    position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border-radius: 50%;
+    display: none; align-items: center; justify-content: center;
+    background: transparent; border: none; color: var(--dim); cursor: pointer;
+  }
+  .search-wrap.has-value .clear-btn { display: flex; }
+  .clear-btn:hover { background: var(--border); color: var(--text); }
+
+  .pills-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 14px; margin-bottom: 16px;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+  }
+  .pills-row .label {
+    font-size: .68rem; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--dim); font-weight: 700; margin-right: 2px;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 11px; border-radius: 999px; cursor: pointer; user-select: none;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: .79rem; transition: all .15s;
+  }
+  .pill input { position: absolute; opacity: 0; pointer-events: none; }
+  .pill:hover { border-color: var(--dim); }
+  .pill:has(input:checked) { background: rgba(245,197,24,.1); border-color: var(--accent); color: var(--accent); }
+  .pill.trakt:has(input:checked) { background: rgba(237,28,36,.12); border-color: var(--trakt); color: var(--trakt); }
+  .pill:has(input:disabled) { opacity: .45; cursor: not-allowed; }
+  .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+  .pills-row .push { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+  /* ---------- STATUS ---------- */
+  .status-line {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-wrap: wrap; min-height: 26px; padding: 2px 8px;
+    font-size: .84rem; color: var(--dim); text-align: center;
+  }
+  .status-line.error { color: var(--danger); }
+  .status-line.busy::before {
+    content: ""; width: 13px; height: 13px; border-radius: 50%; flex: 0 0 auto;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .75s linear infinite;
+  }
+  .aux-line {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-wrap: wrap; min-height: 20px; padding: 0 8px;
+    font-size: .78rem; color: var(--tmdb); text-align: center;
+  }
+  .aux-line:empty { display: none; }
+  .aux-line.error { color: var(--danger); }
+  .spinner {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .75s linear infinite; flex: 0 0 auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- GRID ---------- */
+  .grid {
+    display: grid; gap: 18px; margin-top: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+    transition: opacity .18s;
+  }
+  .grid.busy { opacity: .45; pointer-events: none; }
+  .card {
+    position: relative; display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-radius: var(--radius); overflow: hidden;
+    cursor: pointer; transition: transform .18s, border-color .18s, box-shadow .18s;
+    animation: rise .22s ease-out both;
+    /* Las tarjetas fuera de pantalla no se pintan hasta que hacen falta. */
+    content-visibility: auto; contain-intrinsic-size: auto 350px;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .card:hover, .card:focus-visible { transform: translateY(-4px); border-color: var(--accent); box-shadow: var(--shadow); }
+  .poster { position: relative; aspect-ratio: 2 / 3; background: var(--surface-2); overflow: hidden; }
+  .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .no-poster {
+    height: 100%; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: .8rem; text-align: center; padding: 10px;
+    background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 10px, var(--surface) 10px, var(--surface) 20px);
+  }
+  .badge {
+    position: absolute; top: 8px; padding: 3px 8px; border-radius: 999px;
+    font-size: .7rem; font-weight: 800; line-height: 1.35;
+    background: rgba(0,0,0,.78); color: #fff;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  }
+  .badge-main { right: 8px; }
+  .badge-main.imdb { color: #171200; background: var(--imdb); border: 1px solid var(--imdb); font-weight: 800; }
+  .badge-main.tmdb { color: var(--tmdb); border: 1px solid rgba(1,180,228,.55); }
+  .badge-main.tmdb .star { color: rgba(255,255,255,.8); }
+  .fav {
+    position: absolute; top: 44px; right: 8px; width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; cursor: pointer; z-index: 3;
+    background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.22);
+    color: #fff; font-size: 1.05rem; line-height: 1;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    transition: transform .15s, background .15s, color .15s;
+  }
+  .fav:hover { transform: scale(1.12); background: rgba(255,77,109,.85); }
+  .fav.on { color: var(--heart); background: rgba(0,0,0,.7); border-color: var(--heart); }
+  .trakt-flags { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .flag {
+    padding: 2px 7px; border-radius: 999px; font-size: .64rem; font-weight: 800;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  }
+  .flag.watched { background: rgba(53,208,127,.9); color: #04170d; }
+  .flag.rated { background: rgba(237,28,36,.92); color: #fff; }
+  .hover {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(0deg, rgba(0,0,0,.72), rgba(0,0,0,.15));
+    opacity: 0; transition: opacity .18s; pointer-events: none;
+  }
+  .hover span {
+    background: rgba(255,255,255,.94); color: #111; font-weight: 700; font-size: .78rem;
+    padding: 8px 14px; border-radius: 999px; transform: translateY(4px); transition: transform .18s;
+  }
+  .card:hover .hover, .card:focus-visible .hover { opacity: 1; }
+  .card:hover .hover span { transform: none; }
+  .card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; }
+  .card-body h2 {
+    font-size: .9rem; font-weight: 600; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .card-body .meta { font-size: .76rem; color: var(--dim); }
+
+  .skeleton { pointer-events: none; animation: none; }
+  .skeleton .poster, .skeleton .sk-line {
+    background: linear-gradient(100deg, var(--surface-2) 20%, var(--border-soft) 40%, var(--surface-2) 60%);
+    background-size: 220% 100%; animation: shimmer 1.25s infinite linear;
+  }
+  .skeleton .sk-line { height: 10px; border-radius: 6px; margin: 0 12px 8px; }
+  .skeleton .sk-line.short { width: 45%; }
+  @keyframes shimmer { to { background-position: -120% 0; } }
+
+  .empty {
+    grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center;
+    gap: 12px; padding: 70px 20px; color: var(--dim); text-align: center;
+  }
+  .empty .big { font-size: 2rem; }
+  .empty p { max-width: 460px; line-height: 1.6; font-size: .9rem; }
+
+  .pagination {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    margin-top: 32px; flex-wrap: wrap;
+  }
+  .pagination .page {
+    font-size: .85rem; color: var(--dim); min-width: 130px; text-align: center;
+  }
+  .pagination .page strong { color: var(--text); }
+  .rank-more {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    flex-wrap: wrap; margin-top: 14px;
+  }
+  .rank-more .note { font-size: .76rem; color: var(--dim); }
+
+  /* ---------- DETAIL ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 200; display: none;
+    align-items: flex-start; justify-content: center;
+    padding: clamp(10px, 3vw, 28px);
+    background: rgba(4,6,10,.82);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    overflow-y: auto;
+  }
+  .overlay.open { display: flex; }
+  body.locked { overflow: hidden; }
+  .sheet {
+    position: relative; width: 100%; max-width: 940px; margin: auto;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px rgba(0,0,0,.6);
+  }
+  .sheet.narrow { max-width: 620px; }
+  .sheet-close {
+    position: absolute; top: 12px; right: 12px; z-index: 6;
+    width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.62); border: 1px solid rgba(255,255,255,.22); color: #fff;
+  }
+  .sheet-close:hover { background: rgba(255,92,108,.85); }
+
+  .hero {
+    position: relative; min-height: 220px; padding: 22px;
+    display: flex; align-items: flex-end; gap: 20px;
+    background-color: var(--surface-2); background-size: cover; background-position: center 20%;
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(8,10,14,.35) 0%, rgba(8,10,14,.82) 55%, var(--surface) 100%);
+  }
+  .hero > * { position: relative; z-index: 2; }
+  .hero-poster {
+    width: 118px; flex: 0 0 auto; aspect-ratio: 2 / 3; border-radius: 10px; overflow: hidden;
+    border: 2px solid rgba(255,255,255,.22); box-shadow: 0 12px 30px rgba(0,0,0,.55);
+    background: var(--surface-2);
+  }
+  .hero-poster img { width: 100%; height: 100%; object-fit: cover; }
+  .hero-info { min-width: 0; flex: 1; }
+  .hero-info h2 { font-size: clamp(1.25rem, 2.6vw, 1.7rem); line-height: 1.2; color: #fff; }
+  .hero-info .orig { color: rgba(255,255,255,.62); font-size: .82rem; margin-top: 2px; }
+  .hero-info .meta { color: rgba(255,255,255,.78); font-size: .83rem; margin-top: 6px; }
+  .hero-info .score { color: var(--accent); font-weight: 700; font-size: .88rem; margin-top: 4px; }
+  .hero-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .hero-badges .flag { font-size: .7rem; padding: 3px 9px; }
+  .overview {
+    margin-top: 10px; color: rgba(255,255,255,.82); font-size: .87rem; line-height: 1.6;
+    max-height: 96px; overflow-y: auto; padding-right: 6px;
+  }
+  .overview:empty { display: none; }
+  .hero-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .hero-actions .btn { padding: 8px 12px; font-size: .8rem; background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.24); color: #fff; }
+  .hero-actions .btn:hover { background: rgba(255,255,255,.2); }
+  .hero-actions .btn.on { background: rgba(255,77,109,.9); border-color: transparent; color: #fff; }
+
+  .sheet-body { padding: 20px 22px 26px; }
+  .section { margin-bottom: 22px; }
+  .section:last-child { margin-bottom: 0; }
+  .section h3 {
+    font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+    margin-bottom: 10px; padding-bottom: 7px; border-bottom: 1px solid var(--border-soft);
+  }
+  .ratings { display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 10px; }
+  .rating-card {
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 10px 12px; text-align: center;
+  }
+  .rating-card .src { font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  .rating-card .val { font-size: 1.3rem; font-weight: 800; margin: 2px 0 5px; }
+  .rating-card .bar { height: 4px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .rating-card .bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+  .rating-card.imdb .val { color: var(--imdb); }
+  .rating-card.rt .val { color: #fa320a; }
+  .rating-card.mc .val { color: #ffcc33; }
+  .rating-card.lb .val { color: #00e054; }
+  .rating-card.trakt .val { color: var(--trakt); }
+  .rating-card.mal .val { color: #2e51a2; }
+  .rating-card.tmdb .val { color: var(--tmdb); }
+  .rating-card.muted { grid-column: 1 / -1; text-align: left; color: var(--dim); font-size: .82rem; }
+
+  .cast { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: thin; }
+  .cast-item { flex: 0 0 auto; width: 78px; text-align: center; }
+  .cast-item img, .cast-item .ph {
+    width: 62px; height: 62px; border-radius: 50%; object-fit: cover; margin: 0 auto;
+    background: var(--surface-2); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; font-size: 1.4rem;
+  }
+  .cast-item p { font-size: .7rem; margin-top: 5px; line-height: 1.25; }
+  .cast-item small { display: block; font-size: .64rem; color: var(--dim); }
+  button.cast-item {
+    background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer;
+  }
+  button.cast-item img, button.cast-item .ph { transition: border-color .15s; }
+  button.cast-item:hover img, button.cast-item:hover .ph,
+  button.cast-item:focus-visible img, button.cast-item:focus-visible .ph { border-color: var(--accent); }
+
+  .crew-line {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
+    font-size: .8rem; color: var(--dim); margin: -2px 0 12px;
+  }
+  .crew-line button {
+    background: none; border: 0; padding: 0; font: inherit; font-weight: 600;
+    color: var(--text); cursor: pointer; text-decoration: underline;
+    text-decoration-style: dotted; text-underline-offset: 3px;
+  }
+  .crew-line button:hover { color: var(--accent); }
+
+  .similar { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
+  .sim-card {
+    background: none; border: 0; padding: 0; color: var(--text); font: inherit;
+    text-align: left; cursor: pointer; min-width: 0;
+  }
+  .sim-card img, .sim-card .ph {
+    width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-2);
+  }
+  .sim-card .ph {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: .68rem;
+  }
+  .sim-card:hover img, .sim-card:hover .ph,
+  .sim-card:focus-visible img, .sim-card:focus-visible .ph { border-color: var(--accent); }
+  .sim-card .t {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; font-size: .72rem; line-height: 1.3; margin-top: 5px;
+  }
+  .sim-card .s { display: block; font-size: .66rem; color: var(--dim); margin-top: 2px; }
+
+  .person-head {
+    display: flex; align-items: center; gap: 16px; padding: 22px;
+    background: var(--surface-2);
+  }
+  .person-photo {
+    width: 92px; height: 92px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
+    border: 2px solid var(--border); background: var(--surface);
+    display: flex; align-items: center; justify-content: center; font-size: 2rem;
+  }
+  .person-photo img { width: 100%; height: 100%; object-fit: cover; }
+  .person-head h2 { font-size: 1.25rem; color: #fff; line-height: 1.2; }
+  .person-head .meta { font-size: .8rem; color: rgba(255,255,255,.7); margin-top: 4px; }
+  .person-back { margin-bottom: 14px; }
+  .film-list { display: flex; flex-direction: column; gap: 2px; }
+  .film-row {
+    display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px;
+    align-items: center; width: 100%; padding: 5px 6px; border: 0; border-radius: 8px;
+    background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  }
+  .film-row:hover { background: var(--surface-2); }
+  .film-row img, .film-row .ph {
+    width: 38px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .58rem; color: var(--dim);
+  }
+  .film-row .t { font-size: .8rem; line-height: 1.3; }
+  .film-row .c { display: block; font-size: .68rem; color: var(--dim); }
+  .film-row .y { font-size: .72rem; color: var(--dim); }
+
+  .providers { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .provider {
+    width: 42px; height: 42px; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border); background: var(--surface-2);
+  }
+  .provider img { width: 100%; height: 100%; object-fit: cover; }
+  .providers-note { font-size: .78rem; color: var(--dim); line-height: 1.5; }
+  .trailer {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    background: #e01b1b; color: #fff; font-weight: 700; font-size: .85rem;
+    padding: 9px 15px; border-radius: 999px;
+  }
+  .trailer:hover { filter: brightness(1.08); }
+
+  .sheet .skeleton-block {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 70px 20px; color: var(--dim); font-size: .9rem;
+  }
+  .sheet .error-block { padding: 50px 22px; text-align: center; color: var(--danger); line-height: 1.6; }
+
+  /* ---------- CONFIG ---------- */
+  .config-head { padding: 22px 22px 0; }
+  .config-head h2 { font-size: 1.2rem; }
+  .config-head p { color: var(--dim); font-size: .84rem; margin-top: 4px; line-height: 1.5; }
+  .config-body { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 16px; }
+  .keyfield { display: flex; flex-direction: column; gap: 6px; }
+  .keyfield .row { display: flex; gap: 6px; }
+  .keyfield .row input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; }
+  .keyfield label { font-size: .8rem; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .keyfield label .opt {
+    font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--dim); border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px;
+  }
+  .keyfield small { color: var(--dim); font-size: .74rem; line-height: 1.55; }
+  .keyfield small a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .keyfield small a:hover { text-decoration-thickness: 2px; }
+  .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .checks { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+  .check { display: flex; gap: 9px; align-items: flex-start; font-size: .82rem; line-height: 1.45; cursor: pointer; }
+  .check input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--accent); flex: 0 0 auto; }
+  .check span small { display: block; color: var(--dim); font-size: .74rem; margin-top: 2px; }
+  .notice {
+    padding: 12px 14px; border-radius: var(--radius-sm); font-size: .78rem; line-height: 1.6;
+    background: rgba(245,197,24,.07); border: 1px solid rgba(245,197,24,.28); color: var(--text);
+  }
+  .notice strong { color: var(--accent); }
+  .form-error {
+    display: none; padding: 10px 12px; border-radius: var(--radius-sm);
+    background: rgba(255,92,108,.1); border: 1px solid rgba(255,92,108,.4);
+    color: var(--danger); font-size: .82rem; line-height: 1.5;
+  }
+  .form-error.on { display: block; }
+  .config-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .config-foot .push { margin-left: auto; }
+  .config-foot .btn.primary { color: #161200; }
+
+  /* ---------- TOASTS ---------- */
+  #toasts {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    z-index: 400; display: flex; flex-direction: column; gap: 8px;
+    align-items: center; width: min(92vw, 460px); pointer-events: none;
+  }
+  .toast {
+    padding: 10px 16px; border-radius: 999px; font-size: .82rem; font-weight: 600;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); box-shadow: var(--shadow);
+    animation: pop .2s ease-out both; max-width: 100%;
+  }
+  .toast.ok { border-color: rgba(53,208,127,.5); }
+  .toast.err { border-color: rgba(255,92,108,.55); color: var(--danger); }
+  .toast.warn { border-color: rgba(245,197,24,.55); color: var(--accent); }
+  @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width: 760px) {
+    .field.wide { grid-column: auto; }
+    .filters { position: static; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 12px; }
+    .card-body h2 { font-size: .82rem; }
+    .fav { top: 40px; width: 30px; height: 30px; font-size: .95rem; }
+    .hero { flex-direction: column; align-items: flex-start; }
+    .hero-poster { width: 86px; }
+    .pills-row .push { margin-left: 0; width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>🎬 CineCatálogo<span class="tag">v10</span></h1>
+    <p>Descubre, filtra y sincroniza con Trakt — sin intermediarios</p>
+  </div>
+  <div class="header-actions">
+    <button id="watchBtn" class="btn" aria-pressed="false" title="Ver mi watchlist guardada">
+      <span id="watchIcon">♡</span> Watchlist <span id="watchCount" class="count">0</span>
+    </button>
+    <button id="themeBtn" class="btn icon" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+    <button id="configBtn" class="btn">⚙️ Ajustes</button>
+  </div>
+</header>
+
+<main>
+  <div id="traktBar" class="trakt-bar hidden"></div>
+
+  <section id="catalogPanel" class="hidden" aria-label="Catálogo">
+    <div class="filters">
+      <div class="field wide">
+        <label for="searchInput">Buscar película</label>
+        <div class="search-wrap" id="searchWrap">
+          <input type="search" id="searchInput" placeholder="Título… (pulsa / para buscar)" autocomplete="off" spellcheck="false">
+          <button type="button" id="clearSearch" class="clear-btn" aria-label="Limpiar búsqueda">✕</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="yearFilter">Año exacto</label>
+        <select id="yearFilter"><option value="">Todos</option></select>
+      </div>
+      <div class="field">
+        <label for="genreFilter">Género</label>
+        <select id="genreFilter"><option value="">Todos</option></select>
+      </div>
+      <div class="field">
+        <label for="sortFilter">Ordenar por</label>
+        <select id="sortFilter">
+          <option value="vote_average.desc">Mejor puntuación (TMDb)</option>
+          <option value="vote_average.asc">Peor puntuación (TMDb)</option>
+          <option value="popularity.desc">Más populares</option>
+          <option value="release_date.desc">Más recientes</option>
+          <option value="revenue.desc">Más taquilleras</option>
+          <option value="title.asc">Título (A-Z)</option>
+          <option value="imdb.desc" data-needs-omdb>Nota IMDb (mejor → peor)</option>
+          <option value="imdb.asc" data-needs-omdb>Nota IMDb (peor → mejor)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fromYear">Desde año</label>
+        <select id="fromYear">
+          <option value="">Todas</option>
+          <option value="2020">2020+</option>
+          <option value="2015">2015+</option>
+          <option value="2010">2010+</option>
+          <option value="2005">2005+</option>
+          <option value="2000">2000+</option>
+          <option value="1990">1990+</option>
+          <option value="1980">1980+</option>
+          <option value="1970">1970+</option>
+          <option value="1960">1960+</option>
+          <option value="1950">1950+</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="minVotes">Votos mínimos</label>
+        <input type="number" id="minVotes" placeholder="0" min="0" step="50" inputmode="numeric">
+      </div>
+      <div class="field hidden" id="imdbMinField">
+        <label for="imdbMin" title="Se aplica al ranking IMDb">Nota IMDb mínima</label>
+        <select id="imdbMin">
+          <option value="">Cualquiera</option>
+          <option value="6">6,0 o más</option>
+          <option value="7">7,0 o más</option>
+          <option value="7.5">7,5 o más</option>
+          <option value="8">8,0 o más</option>
+          <option value="8.5">8,5 o más</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="pills-row">
+      <span class="label">Excluir</span>
+      <label class="pill"><input type="checkbox" data-exclude="animation"><span>🎨 Animación</span></label>
+      <label class="pill"><input type="checkbox" data-exclude="anime"><span>🇯🇵 Solo anime</span></label>
+      <label class="pill"><input type="checkbox" data-exclude="eastAsia"><span>🌏 Asia (no anime)</span></label>
+      <label class="pill"><input type="checkbox" data-exclude="india"><span>🇮🇳 India</span></label>
+      <label class="pill"><input type="checkbox" data-exclude="documentary"><span>📹 Documentales</span></label>
+      <label class="pill"><input type="checkbox" data-exclude="tvMovie"><span>📺 Películas de TV</span></label>
+      <span class="sep"></span>
+      <label class="pill trakt" title="Oculta del catálogo las películas que ya viste en Trakt"><input type="checkbox" id="hideWatched" disabled><span>🙈 Solo no vistas</span></label>
+      <span class="push">
+        <button id="resetFilters" class="link-btn" type="button">Limpiar filtros</button>
+      </span>
+    </div>
+
+    <div id="status" class="status-line" role="status" aria-live="polite"></div>
+    <div id="aux" class="aux-line" role="status" aria-live="polite"></div>
+
+    <div id="movieGrid" class="grid" aria-busy="false"></div>
+
+    <nav class="pagination" id="pagination" aria-label="Paginación">
+      <button id="prevBtn" class="btn" disabled>← Anterior</button>
+      <span class="page" id="pageInfo"></span>
+      <button id="nextBtn" class="btn" disabled>Siguiente →</button>
+    </nav>
+
+    <div id="rankMoreWrap" class="rank-more hidden">
+      <button id="rankMoreBtn" class="btn" type="button">＋ Añadir 60 candidatas</button>
+      <span class="note" id="rankMoreNote"></span>
+    </div>
+  </section>
+</main>
+
+<!-- ============ DETALLE ============ -->
+<div id="detailModal" class="overlay" role="dialog" aria-modal="true" aria-label="Detalle de la película">
+  <div class="sheet">
+    <button class="sheet-close" id="closeDetail" aria-label="Cerrar">✕</button>
+    <div id="detailContent"></div>
+  </div>
+</div>
+
+<!-- ============ CONFIGURACIÓN ============ -->
+<div id="configModal" class="overlay" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+  <div class="sheet narrow">
+    <button class="sheet-close" id="closeConfig" aria-label="Cerrar">✕</button>
+    <div class="config-head">
+      <h2 id="configTitle">⚙️ Configuración</h2>
+      <p>Todo funciona en tu navegador. Las claves se envían <strong>directamente</strong> a cada API, sin proxies ni servidores intermedios.</p>
+    </div>
+    <div class="config-body">
+      <div class="notice">
+        🔐 <strong>Privacidad:</strong> tus claves se guardan en el almacenamiento de este navegador
+        (origen de este archivo). No se incluyen en la URL ni en enlaces compartidos.
+        En un equipo compartido, activa «no guardar» abajo.
+      </div>
+
+      <div class="keyfield">
+        <label for="cfgTmdb">TMDb · API Key o Read Token <span class="opt">obligatorio</span></label>
+        <div class="row">
+          <input id="cfgTmdb" type="password" placeholder="v3 key (32 hex) o v4 Read Access Token (eyJ…)" autocomplete="off" spellcheck="false">
+          <button class="btn icon" type="button" data-reveal="cfgTmdb" aria-label="Mostrar u ocultar">👁</button>
+        </div>
+        <small>
+          Gratis: <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener noreferrer">crear cuenta</a> →
+          <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">Ajustes → API</a>.
+          Con el <em>Read Access Token</em> (v4) la clave viaja en cabecera, no en la URL.
+        </small>
+      </div>
+
+      <div class="keyfield">
+        <label for="cfgOmdb">OMDb <span class="opt">opcional</span></label>
+        <div class="row">
+          <input id="cfgOmdb" type="password" placeholder="Nota IMDb en las tarjetas y puntuaciones extra" autocomplete="off" spellcheck="false">
+          <button class="btn icon" type="button" data-reveal="cfgOmdb" aria-label="Mostrar u ocultar">👁</button>
+        </div>
+        <small>Gratis en <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer">omdbapi.com</a> (1.000 consultas/día).</small>
+      </div>
+
+      <div class="keyfield">
+        <label for="cfgMdblist">MDBList <span class="opt">opcional</span></label>
+        <div class="row">
+          <input id="cfgMdblist" type="password" placeholder="Puntuaciones agregadas (RT, MC, Letterboxd…)" autocomplete="off" spellcheck="false">
+          <button class="btn icon" type="button" data-reveal="cfgMdblist" aria-label="Mostrar u ocultar">👁</button>
+        </div>
+        <small>Gratis en <a href="https://mdblist.com/preferences/" target="_blank" rel="noopener noreferrer">mdblist.com/preferences</a>.</small>
+      </div>
+
+      <div class="config-grid">
+        <div class="keyfield">
+          <label for="cfgTraktId">Trakt · Client ID <span class="opt">opcional</span></label>
+          <input id="cfgTraktId" type="password" placeholder="Solo el Client ID (nunca el Secret)" autocomplete="off" spellcheck="false">
+          <small>Crea una app en <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener noreferrer">trakt.tv/oauth/applications</a> (Redirect URI: <code>urn:ietf:wg:oauth:2.0:oob</code>).</small>
+        </div>
+        <div class="keyfield">
+          <label for="cfgTraktUser">Trakt · Usuario <span class="opt">opcional</span></label>
+          <input id="cfgTraktUser" type="text" placeholder="tu-usuario" autocomplete="off" spellcheck="false">
+          <small>El perfil y el historial deben ser <strong>públicos</strong>.</small>
+        </div>
+      </div>
+
+      <div class="keyfield">
+        <label for="cfgRegion">Región para «dónde verla»</label>
+        <select id="cfgRegion"></select>
+      </div>
+
+      <div class="checks">
+        <label class="check">
+          <input type="checkbox" id="cfgSessionOnly">
+          <span>No guardar las claves en este equipo
+            <small>Solo duran hasta cerrar la pestaña (sessionStorage).</small>
+          </span>
+        </label>
+      </div>
+
+      <div id="cfgError" class="form-error"></div>
+
+      <div class="config-foot">
+        <button id="cfgSave" class="btn primary">Guardar y verificar</button>
+        <button id="cfgExport" class="btn" type="button">⬇ Exportar watchlist</button>
+        <button id="cfgImport" class="btn" type="button">⬆ Importar</button>
+        <input type="file" id="cfgFile" accept="application/json,.json" class="hidden">
+        <span class="push"></span>
+        <button id="cfgWipe" class="btn" type="button">🗑 Borrar todo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+<noscript><p style="padding:24px">Esta aplicación necesita JavaScript.</p></noscript>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ================= CONSTANTES ================= */
+  const API = {
+    TMDB: 'https://api.themoviedb.org/3',
+    IMG: 'https://image.tmdb.org/t/p',
+    OMDB: 'https://www.omdbapi.com/',
+    MDBLIST: 'https://api.mdblist.com/tmdb/movie/',
+    TRAKT: 'https://api.trakt.tv'
+  };
+  const LANG = 'es-ES';
+  const TTL = {
+    genres: 7 * 864e5,
+    list: 10 * 60e3,
+    detail: 24 * 36e5,
+    scores: 12 * 36e5,
+    imdb: 24 * 36e5,
+    trakt: 30 * 60e3
+  };
+  const TIMEOUT = 15000;
+  const MAX_PAGES = 500;
+  const KEYS = {
+    settings: 'cine.settings.v2',
+    watch: 'cine.watchlist.v2',
+    trakt: 'cine.trakt.v2',
+    imdb: 'cine.imdb.v3',
+    legacyWatch: 'local_watchlist'
+  };
+  const CACHE_PREFIX = 'cine.cache.';
+  const CACHE_MAX_BYTES = 120000;
+  const CACHE_MAX_ENTRIES = 400;
+
+  const REGIONS = [
+    ['ES', 'España'], ['AR', 'Argentina'], ['MX', 'México'], ['CO', 'Colombia'],
+    ['CL', 'Chile'], ['PE', 'Perú'], ['UY', 'Uruguay'], ['PY', 'Paraguay'],
+    ['BO', 'Bolivia'], ['EC', 'Ecuador'], ['VE', 'Venezuela'], ['BR', 'Brasil'],
+    ['US', 'Estados Unidos'], ['GB', 'Reino Unido'], ['FR', 'Francia'],
+    ['DE', 'Alemania'], ['IT', 'Italia'], ['PT', 'Portugal'], ['CA', 'Canadá'],
+    ['AU', 'Australia'], ['JP', 'Japón'], ['KR', 'Corea del Sur'], ['IN', 'India']
+  ];
+
+  const SORTS = ['vote_average.desc', 'vote_average.asc', 'popularity.desc', 'release_date.desc', 'revenue.desc', 'title.asc', 'imdb.desc', 'imdb.asc'];
+  // El ranking IMDb se calcula en local: TMDb no sabe ordenar por esa nota.
+  const IMDB_POOL_PAGES = 3;
+  const IMDB_MAX_PAGES = 9;
+  const IMDB_PAGE_SIZE = 20;
+  const IMDB_MIN_VOTES = 100;
+  const IMDB_RANK_MIN_VOTES = 500;
+
+  const INDIAN_LANGS = ['hi', 'ta', 'te', 'ml', 'kn', 'bn', 'gu', 'mr', 'pa', 'ur', 'as', 'or', 'sa', 'ne', 'si'];
+
+  const EXCLUSIONS = {
+    animation: { genre: 16 },
+    anime: { keyword: 210024 },
+    eastAsia: {
+      test: (m) => {
+        const lang = m.original_language;
+        const anim = (m.genre_ids || []).indexOf(16) !== -1;
+        return lang === 'ko' || lang === 'zh' || (lang === 'ja' && !anim);
+      }
+    },
+    india: { languages: INDIAN_LANGS },
+    documentary: { genre: 99 },
+    tvMovie: { genre: 10770 }
+  };
+
+  const DEFAULTS = { tmdb: '', omdb: '', mdblist: '', traktId: '', traktUser: '', region: '', theme: 'dark', sessionOnly: false };
+
+  /* ================= UTILIDADES ================= */
+  const $ = (id) => document.getElementById(id);
+  const el = (sel, root = document) => root.querySelector(sel);
+  const all = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const numFmt = new Intl.NumberFormat('es-ES');
+  const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+  const fmtRating = (v) => Number(v).toFixed(1).replace('.', ',');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function safePath(p) {
+    return typeof p === 'string' && p.charAt(0) === '/' && /^\/[A-Za-z0-9._-]+$/.test(p) ? p : '';
+  }
+  function imgUrl(size, path) {
+    const p = safePath(path);
+    return p ? API.IMG + '/' + size + p : '';
+  }
+  function posterSrcset(path) {
+    const p = safePath(path);
+    if (!p) return '';
+    return [185, 342, 500].map((w) => API.IMG + '/w' + w + p + ' ' + w + 'w').join(', ');
+  }
+  function escapeAttr(v) { return esc(v).replace(/`/g, '&#96;'); }
+
+  function timeAgo(ts) {
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 60) return 'hace un momento';
+    const m = Math.round(s / 60);
+    if (m < 60) return 'hace ' + m + ' min';
+    const h = Math.round(m / 60);
+    if (h < 24) return 'hace ' + h + ' h';
+    return 'hace ' + Math.round(h / 24) + ' d';
+  }
+  function fmtRuntime(min) {
+    const h = Math.floor(min / 60), m = min % 60;
+    return h ? h + ' h ' + (m ? m + ' min' : '') : m + ' min';
+  }
+
+  /* ================= ALMACENAMIENTO ================= */
+  const local = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
+    del(k) { try { localStorage.removeItem(k); } catch {} }
+  };
+  const session = {
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, v); return true; } catch { return false; } },
+    del(k) { try { sessionStorage.removeItem(k); } catch {} }
+  };
+
+  let S = { ...DEFAULTS };
+
+  function deriveRegion() {
+    const parts = String(navigator.language || '').toUpperCase().split('-');
+    const code = parts[1];
+    return REGIONS.some((r) => r[0] === code) ? code : 'ES';
+  }
+
+  function loadSettings() {
+    let raw = local.get(KEYS.settings) || session.get(KEYS.settings);
+    if (raw) {
+      try { Object.assign(S, JSON.parse(raw)); } catch {}
+    } else {
+      // Migración desde la versión 9 (claves sueltas)
+      S.tmdb = local.get('tmdb_api_key') || '';
+      S.omdb = local.get('omdb_api_key') || '';
+      S.mdblist = local.get('mdblist_api_key') || '';
+      S.traktUser = local.get('trakt_username') || '';
+      if (S.tmdb) {
+        ['tmdb_api_key', 'omdb_api_key', 'mdblist_api_key', 'trakt_username', 'trakt_cache_v1', 'imdb_rating_cache_v1'].forEach(local.del);
+        persistSettings();
+      }
+    }
+    S.region = S.region || deriveRegion();
+    S.theme = S.theme === 'light' ? 'light' : 'dark';
+  }
+
+  function persistSettings() {
+    const payload = JSON.stringify(S);
+    if (S.sessionOnly) {
+      session.set(KEYS.settings, payload);
+      local.del(KEYS.settings);
+    } else {
+      local.set(KEYS.settings, payload);
+      session.del(KEYS.settings);
+    }
+  }
+
+  /* ================= CACHÉ HTTP (IndexedDB) =================
+     IndexedDB aguanta mucho más que sessionStorage y conserva la caché entre
+     sesiones. Si el navegador la bloquea (algunos contextos `file://`),
+     se cae con transparencia a sessionStorage. */
+  const memory = new Map();
+  const inflight = new Map();
+  const IDB_NAME = 'cinecatalogo';
+  const IDB_STORE = 'http';
+  let idbPromise = null;
+
+  function idbOpen() {
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) { reject(new Error('IndexedDB no disponible')); return; }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('IndexedDB'));
+    }).catch(() => null);
+    return idbPromise;
+  }
+
+  async function idbGet(key) {
+    const db = await idbOpen();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+  }
+  async function idbSet(key, value) {
+    const db = await idbOpen();
+    if (!db) return false;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch { resolve(false); }
+    });
+  }
+  async function idbDel(key) {
+    const db = await idbOpen();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+    } catch {}
+  }
+  async function idbCount() {
+    const db = await idbOpen();
+    if (!db) return 0;
+    return new Promise((resolve) => {
+      try {
+        const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).count();
+        req.onsuccess = () => resolve(req.result || 0);
+        req.onerror = () => resolve(0);
+      } catch { resolve(0); }
+    });
+  }
+  async function idbClear() {
+    const db = await idbOpen();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).clear();
+    } catch {}
+  }
+  async function idbPrune() {
+    const db = await idbOpen();
+    if (!db) return;
+    return new Promise((resolve) => {
+      try {
+        const store = db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE);
+        const now = Date.now();
+        const keep = [];
+        const req = store.openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (!cur) {
+            keep.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+            keep.slice(0, Math.ceil(keep.length / 2)).forEach((it) => store.delete(it.k));
+            resolve();
+            return;
+          }
+          const v = cur.value;
+          if (!v || !(v.exp > now)) store.delete(cur.key);
+          else keep.push({ k: cur.key, ts: v.ts || 0 });
+          cur.continue();
+        };
+        req.onerror = () => resolve();
+      } catch { resolve(); }
+    });
+  }
+
+  function cacheKey(url) {
+    try {
+      const u = new URL(url);
+      u.searchParams.delete('api_key');
+      u.searchParams.delete('apikey');
+      return u.toString();
+    } catch { return url; }
+  }
+
+  async function readCache(key) {
+    const now = Date.now();
+    const m = memory.get(key);
+    if (m && m.exp > now) return m;
+
+    const full = CACHE_PREFIX + key;
+    const entry = await idbGet(full);
+    if (entry && entry.exp > now) { memory.set(key, entry); return entry; }
+    if (entry) idbDel(full);
+
+    // Compatibilidad con la caché antigua en sessionStorage.
+    const raw = session.get(full);
+    if (!raw) return null;
+    try {
+      const old = JSON.parse(raw);
+      if (!old || !(old.exp > now)) { session.del(full); return null; }
+      memory.set(key, old);
+      idbSet(full, old).then((ok) => { if (ok) session.del(full); });
+      return old;
+    } catch { return null; }
+  }
+
+  async function writeCache(key, entry) {
+    entry.ts = Date.now();
+    memory.set(key, entry);
+    const full = CACHE_PREFIX + key;
+    const payload = JSON.stringify(entry);
+    if (payload.length > CACHE_MAX_BYTES) return;
+    const ok = await idbSet(full, entry);
+    if (!ok) { try { session.set(full, payload); } catch {} }
+    else { session.del(full); }
+    try {
+      if ((await idbCount()) > CACHE_MAX_ENTRIES) idbPrune();
+    } catch {}
+  }
+
+  function allCacheKeys() {
+    const out = [];
+    try {
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k && k.indexOf(CACHE_PREFIX) === 0) out.push(k);
+      }
+    } catch {}
+    return out;
+  }
+  function clearCache() {
+    memory.clear();
+    allCacheKeys().forEach((k) => session.del(k));
+    idbClear();
+  }
+
+  function fetchTimeout(url, options) {
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, TIMEOUT);
+    const external = options && options.signal;
+    const onAbort = () => ctrl.abort();
+    if (external) {
+      if (external.aborted) ctrl.abort();
+      else external.addEventListener('abort', onAbort, { once: true });
+    }
+    return fetch(url, { ...options, signal: ctrl.signal })
+      .catch((err) => {
+        if (timedOut) {
+          const e = new Error('Tiempo de espera agotado');
+          e.name = 'TimeoutError';
+          throw e;
+        }
+        throw err;
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (external) external.removeEventListener('abort', onAbort);
+      });
+  }
+
+  function retryAfter(res) {
+    const h = res.headers.get('Retry-After');
+    const n = parseInt(h, 10);
+    if (!isNaN(n) && n > 0 && n < 30) return n * 1000;
+    return 900;
+  }
+
+  async function httpJson(url, opts = {}) {
+    const { headers = {}, ttl = 0, force = false, retries = 1, signal } = opts;
+    const key = cacheKey(url);
+
+    if (!force) {
+      const hit = await readCache(key);
+      if (hit) return hit.data;
+    }
+    if (inflight.has(key)) return inflight.get(key);
+
+    const task = (async () => {
+      let lastErr = null;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const res = await fetchTimeout(url, { headers, signal });
+          if (res.status === 429 || res.status >= 500) {
+            if (attempt < retries) {
+              const wait = res.status === 429 ? retryAfter(res) : 450 * (attempt + 1);
+              await sleep(wait);
+              continue;
+            }
+          }
+          if (!res.ok) {
+            const err = new Error('HTTP ' + res.status);
+            err.status = res.status;
+            throw err;
+          }
+          const data = await res.json();
+          if (ttl > 0) writeCache(key, { data, exp: Date.now() + ttl });
+          return data;
+        } catch (err) {
+          lastErr = err;
+          const retryable = !err.status || err.status >= 500 || err.status === 429;
+          if (attempt < retries && retryable && err.name !== 'AbortError') {
+            await sleep(400 * (attempt + 1));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastErr;
+    })();
+
+    inflight.set(key, task);
+    try { return await task; } finally { inflight.delete(key); }
+  }
+
+  /* ================= TMDb ================= */
+  const isToken = (k) => /^ey[A-Za-z0-9_-]{10,}\./.test(String(k || '').trim());
+
+  function tmdbUrl(path, params = {}, key = S.tmdb) {
+    const url = new URL(API.TMDB + path);
+    if (!isToken(key)) url.searchParams.set('api_key', key);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== '' && v != null) url.searchParams.set(k, v);
+    });
+    return url.toString();
+  }
+  function tmdb(path, params = {}, opts = {}) {
+    const headers = isToken(S.tmdb) ? { Authorization: 'Bearer ' + S.tmdb.trim() } : {};
+    return httpJson(tmdbUrl(path, params), { headers, ttl: TTL.list, ...opts });
+  }
+  function tmdbMessage(err) {
+    if (err && err.status === 401) return 'La API key de TMDb no es válida.';
+    if (err && err.status === 404) return 'No encontrado en TMDb.';
+    if (err && err.status === 429) return 'TMDb: demasiadas peticiones. Espera un momento.';
+    if (err && err.name === 'TimeoutError') return 'TMDb tardó demasiado en responder.';
+    return 'Error de red con TMDb (' + (err && err.message ? err.message : 'desconocido') + ').';
+  }
+
+  /* ================= ESTADO ================= */
+  const state = {
+    mode: 'catalog',
+    page: 1,
+    totalPages: 1,
+    totalResults: 0,
+    reqId: 0,
+    loading: false,
+    hiddenWatched: 0,
+    detailId: null,
+    personId: null,
+    personFrom: null
+  };
+  const trakt = { watched: new Set(), ratings: new Map(), loaded: false, ts: 0, error: '' };
+  const movieIndex = new Map();
+
+  let watch = [];
+  let watchMap = new Map();
+
+  /* ================= WATCHLIST ================= */
+  function saveWatchlist() {
+    local.set(KEYS.watch, JSON.stringify(watch));
+  }
+  function normalizeEntry(x) {
+    if (x == null) return null;
+    if (typeof x === 'number') return { id: x, title: '', release_date: '', poster_path: '', vote_average: 0, added: 0 };
+    const id = Number(x.id);
+    if (!id) return null;
+    return {
+      id,
+      title: typeof x.title === 'string' ? x.title : '',
+      release_date: typeof x.release_date === 'string' ? x.release_date : '',
+      poster_path: safePath(x.poster_path || x.poster) || '',
+      vote_average: Number(x.vote_average || x.vote) || 0,
+      added: Number(x.added) || 0
+    };
+  }
+  function loadWatchlist() {
+    let raw = local.get(KEYS.watch);
+    let list = [];
+    if (raw) {
+      try { list = JSON.parse(raw); } catch { list = []; }
+    }
+    if ((!list || !list.length) && local.get(KEYS.legacyWatch)) {
+      try { list = JSON.parse(local.get(KEYS.legacyWatch)) || []; } catch { list = []; }
+      local.del(KEYS.legacyWatch);
+    }
+    watch = (Array.isArray(list) ? list : []).map(normalizeEntry).filter(Boolean);
+    watch.forEach((w) => {
+      if (!w.added) w.added = Date.now();
+      movieIndex.set(w.id, { ...(movieIndex.get(w.id) || {}), id: w.id, title: w.title, release_date: w.release_date, poster_path: w.poster_path, vote_average: w.vote_average });
+    });
+    watchMap = new Map(watch.map((w) => [w.id, w]));
+    saveWatchlist();
+    updateWatchCount();
+  }
+  function rememberMovie(m) {
+    if (!m || !m.id) return;
+    const prev = movieIndex.get(m.id) || {};
+    movieIndex.set(m.id, {
+      id: Number(m.id),
+      title: m.title || prev.title || '',
+      release_date: m.release_date || prev.release_date || '',
+      poster_path: safePath(m.poster_path) || prev.poster_path || '',
+      vote_average: Number(m.vote_average) || Number(prev.vote_average) || 0
+    });
+  }
+  function updateWatchCount() {
+    const btn = $('watchBtn');
+    $('watchCount').textContent = String(watch.length);
+    btn.setAttribute('aria-pressed', state.mode === 'watchlist' ? 'true' : 'false');
+    btn.title = state.mode === 'watchlist' ? 'Volver al catálogo' : 'Ver mi watchlist guardada';
+    $('watchIcon').textContent = state.mode === 'watchlist' ? '←' : (watch.length ? '♥' : '♡');
+  }
+  function toggleWatch(id) {
+    const movie = movieIndex.get(id);
+    if (watchMap.has(id)) {
+      watch = watch.filter((w) => w.id !== id);
+      watchMap.delete(id);
+      toast('Quitada de la watchlist');
+    } else {
+      if (!movie) { toast('No se pudo añadir: faltan datos', 'err'); return false; }
+      const entry = {
+        id,
+        title: movie.title || '',
+        release_date: movie.release_date || '',
+        poster_path: movie.poster_path || '',
+        vote_average: movie.vote_average || 0,
+        added: Date.now()
+      };
+      watch.unshift(entry);
+      watchMap.set(id, entry);
+      toast('Añadida a la watchlist');
+    }
+    saveWatchlist();
+    updateWatchCount();
+    syncHearts(id);
+    if (state.mode === 'watchlist') renderWatchlist();
+    return watchMap.has(id);
+  }
+  function syncHearts(id) {
+    const on = watchMap.has(id);
+    all('[data-fav="' + id + '"]').forEach((b) => {
+      b.classList.toggle('on', on);
+      b.textContent = on ? '♥' : '♡';
+      b.setAttribute('aria-pressed', String(on));
+      b.setAttribute('aria-label', on ? 'Quitar de la watchlist' : 'Añadir a la watchlist');
+      b.title = on ? 'Quitar de la watchlist' : 'Añadir a la watchlist';
+    });
+    const modalBtn = el('#detailFav');
+    if (modalBtn && Number(modalBtn.dataset.fav) === id) {
+      modalBtn.classList.toggle('on', on);
+      modalBtn.textContent = on ? '♥ En tu watchlist' : '♡ Añadir a watchlist';
+    }
+  }
+
+  /* ================= FILTROS ================= */
+  function filters() {
+    return {
+      q: $('searchInput').value.trim(),
+      year: $('yearFilter').value,
+      genre: $('genreFilter').value,
+      sort: $('sortFilter').value,
+      from: $('fromYear').value,
+      minVotes: Math.max(0, parseInt($('minVotes').value, 10) || 0),
+      imdbMin: parseFloat($('imdbMin').value) || 0,
+      exclusions: all('input[data-exclude]:checked').map((cb) => cb.dataset.exclude),
+      hideWatched: $('hideWatched').checked
+    };
+  }
+  function minVotesEffective(f) {
+    return Math.max(f.minVotes, f.sort.indexOf('vote_average') === 0 ? 50 : 0);
+  }
+  function resetFilterInputs() {
+    $('searchInput').value = '';
+    $('searchWrap').classList.remove('has-value');
+    $('yearFilter').value = '';
+    $('genreFilter').value = '';
+    $('sortFilter').value = 'vote_average.desc';
+    $('fromYear').value = '';
+    $('minVotes').value = '';
+    $('imdbMin').value = '';
+    all('input[data-exclude]').forEach((cb) => { cb.checked = false; });
+    $('hideWatched').checked = false;
+    state.page = 1;
+    syncImdbControls();
+  }
+  function syncImdbSortOptions() {
+    const hasOmdb = !!S.omdb;
+    all('option[data-needs-omdb]').forEach((o) => {
+      o.disabled = !hasOmdb;
+      o.title = hasOmdb ? 'Ranking calculado con las notas de OMDb' : 'Necesita una clave de OMDb';
+    });
+    if (!hasOmdb && $('sortFilter').value.indexOf('imdb.') === 0) {
+      $('sortFilter').value = 'vote_average.desc';
+    }
+    syncImdbControls();
+  }
+  function syncImdbControls() {
+    const imdbMode = state.mode !== 'watchlist' && !!S.omdb && $('sortFilter').value.indexOf('imdb.') === 0;
+    $('imdbMinField').classList.toggle('hidden', !imdbMode);
+    $('rankMoreWrap').classList.toggle('hidden', !imdbMode);
+    updateRankMore();
+  }
+  function updateRankMore() {
+    const btn = $('rankMoreBtn');
+    if (!btn) return;
+    const ready = !!(imdbPool && imdbPool.sig && imdbPool.items.length);
+    const maxed = !!imdbPool && imdbPool.pages >= IMDB_MAX_PAGES;
+    const addPages = maxed ? 0 : Math.min(3, IMDB_MAX_PAGES - (imdbPool.pages || IMDB_POOL_PAGES));
+    btn.disabled = !ready || maxed;
+    btn.textContent = maxed
+      ? 'Máximo alcanzado (' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ')'
+      : '＋ Añadir ' + (addPages * IMDB_PAGE_SIZE) + ' candidatas';
+    btn.title = maxed
+      ? 'Has alcanzado el máximo de ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) + ' candidatas para este ranking'
+      : 'Consulta las notas que falten en OMDb y reordena el ranking';
+    const note = $('rankMoreNote');
+    if (note) {
+      note.textContent = ready
+        ? plural(imdbPool.items.length, 'candidata', 'candidatas') + ' en el ranking · máx. ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE)
+        : '';
+    }
+  }
+  function isExcluded(m, keys) {
+    for (const key of keys) {
+      const ex = EXCLUSIONS[key];
+      if (!ex) continue;
+      if (ex.genre && (m.genre_ids || []).indexOf(ex.genre) !== -1) return true;
+      if (ex.languages && m.original_language && ex.languages.indexOf(m.original_language) !== -1) return true;
+      if (ex.test && ex.test(m)) return true;
+    }
+    return false;
+  }
+  function clientFilters(list, f) {
+    let out = list;
+    if (f.exclusions.length) out = out.filter((m) => !isExcluded(m, f.exclusions));
+    state.hiddenWatched = 0;
+    if (f.hideWatched && trakt.loaded) {
+      const before = out.length;
+      out = out.filter((m) => !trakt.watched.has(m.id));
+      state.hiddenWatched = before - out.length;
+    }
+    return out;
+  }
+
+  /* ================= UI BÁSICA ================= */
+  function toast(msg, kind = 'ok') {
+    const box = $('toasts');
+    const node = document.createElement('div');
+    node.className = 'toast ' + kind;
+    node.textContent = msg;
+    box.appendChild(node);
+    setTimeout(() => { node.style.opacity = '0'; node.style.transition = 'opacity .25s'; }, 2400);
+    setTimeout(() => node.remove(), 2750);
+  }
+  function setStatus(text, kind = '') {
+    const node = $('status');
+    node.classList.remove('error', 'warn');
+    if (kind) node.classList.add(kind);
+    node.textContent = text || '';
+  }
+  function setAux(text, kind = '') {
+    const node = $('aux');
+    node.className = 'aux-line ' + kind;
+    node.textContent = text || '';
+  }
+  function setBusy(busy) {
+    state.loading = busy;
+    $('status').classList.toggle('busy', busy);
+    $('movieGrid').setAttribute('aria-busy', busy ? 'true' : 'false');
+  }
+
+  /* ================= TEMA ================= */
+  function applyTheme() {
+    document.documentElement.dataset.theme = S.theme;
+    $('themeBtn').textContent = S.theme === 'light' ? '☀️' : '🌙';
+    $('themeBtn').title = S.theme === 'light' ? 'Cambiar a tema oscuro' : 'Cambiar a tema claro';
+  }
+
+  /* ================= URL ================= */
+  function readParams() {
+    const p = new URLSearchParams(location.search);
+    return {
+      q: p.get('q') || '',
+      year: p.get('year') || '',
+      genre: p.get('genre') || '',
+      sort: SORTS.indexOf(p.get('sort')) !== -1 ? p.get('sort') : 'vote_average.desc',
+      from: p.get('from') || '',
+      minVotes: p.get('minVotes') || '',
+      imdbMin: p.get('imdbMin') || '',
+      exclusions: (p.get('exclude') || '').split(',').filter((k) => EXCLUSIONS[k]),
+      hideWatched: p.get('hideWatched') === '1',
+      peli: Math.max(0, parseInt(p.get('peli'), 10) || 0),
+      page: Math.max(1, parseInt(p.get('page'), 10) || 1),
+      view: p.get('view') === 'watchlist' ? 'watchlist' : 'catalog'
+    };
+  }
+  function writeParams() {
+    const f = filters();
+    const p = new URLSearchParams();
+    if (f.q) p.set('q', f.q);
+    if (f.year) p.set('year', f.year);
+    if (f.genre) p.set('genre', f.genre);
+    if (f.sort !== 'vote_average.desc') p.set('sort', f.sort);
+    if (f.from) p.set('from', f.from);
+    if (f.minVotes > 0) p.set('minVotes', String(f.minVotes));
+    if (f.imdbMin > 0) p.set('imdbMin', String(f.imdbMin));
+    if (f.exclusions.length) p.set('exclude', f.exclusions.join(','));
+    if (f.hideWatched) p.set('hideWatched', '1');
+    if (state.page > 1) p.set('page', String(state.page));
+    if (state.mode === 'watchlist') p.set('view', 'watchlist');
+    if (state.detailId) p.set('peli', String(state.detailId));
+    const qs = p.toString();
+    try { history.replaceState(null, '', qs ? location.pathname + '?' + qs : location.pathname); } catch {}
+  }
+  /** Mantiene la ficha abierta en la URL sin recargar ni ensuciar el historial. */
+  function syncPeliUrl() {
+    try {
+      const u = new URL(location.href);
+      if (state.detailId) u.searchParams.set('peli', String(state.detailId));
+      else u.searchParams.delete('peli');
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    } catch {}
+  }
+  function applyParams(p) {
+    $('searchInput').value = p.q;
+    $('searchWrap').classList.toggle('has-value', !!p.q);
+    $('yearFilter').value = p.year;
+    $('sortFilter').value = p.sort;
+    $('fromYear').value = p.from;
+    $('minVotes').value = p.minVotes || '';
+    $('imdbMin').value = p.imdbMin || '';
+    all('input[data-exclude]').forEach((cb) => { cb.checked = p.exclusions.indexOf(cb.dataset.exclude) !== -1; });
+    const hw = $('hideWatched');
+    hw.checked = p.hideWatched;
+    state.page = p.page;
+    setMode(p.view, false);
+  }
+  function setMode(mode, reload = true) {
+    state.mode = mode;
+    if (mode === 'watchlist') state.page = 1;
+    updateWatchCount();
+    $('pagination').classList.toggle('hidden', mode === 'watchlist');
+    syncImdbControls();
+    if (reload) reloadData();
+  }
+
+  /* ================= GÉNEROS / AÑOS ================= */
+  function populateYears() {
+    const sel = $('yearFilter');
+    const now = new Date().getFullYear();
+    for (let y = now + 1; y >= 1950; y--) {
+      const o = document.createElement('option');
+      o.value = String(y);
+      o.textContent = String(y);
+      sel.appendChild(o);
+    }
+  }
+  function populateRegions() {
+    const sel = $('cfgRegion');
+    REGIONS.forEach(([code, name]) => {
+      const o = document.createElement('option');
+      o.value = code;
+      o.textContent = name + ' (' + code + ')';
+      sel.appendChild(o);
+    });
+  }
+  function fillGenres(genres) {
+    const sel = $('genreFilter');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Todos</option>';
+    (genres || []).forEach((g) => {
+      const o = document.createElement('option');
+      o.value = String(g.id);
+      o.textContent = g.name;
+      sel.appendChild(o);
+    });
+    if (current && all('option', sel).some((o) => o.value === current)) sel.value = current;
+  }
+  async function loadGenres() {
+    const data = await tmdb('/genre/movie/list', { language: LANG }, { ttl: TTL.genres });
+    fillGenres(data.genres);
+  }
+
+  /* ================= TRAKT ================= */
+  function traktError(status) {
+    const map = {
+      401: 'Trakt: Client ID inválido (HTTP 401).',
+      403: 'Trakt: acceso denegado (HTTP 403) — revisa el Client ID o si el perfil es privado.',
+      404: 'Trakt: usuario no encontrado (HTTP 404).',
+      420: 'Trakt: límite de peticiones alcanzado.',
+      429: 'Trakt: demasiadas peticiones, espera un momento.'
+    };
+    const err = new Error(map[status] || ('Trakt: HTTP ' + status));
+    err.status = status;
+    return err;
+  }
+
+  async function traktPage(path, page) {
+    const url = new URL(API.TRAKT + path);
+    url.searchParams.set('limit', '100');
+    url.searchParams.set('page', String(page));
+    const res = await fetchTimeout(url.toString(), {
+      headers: { 'trakt-api-version': '2', 'trakt-api-key': S.traktId }
+    });
+    if (!res.ok) throw traktError(res.status);
+    const pages = parseInt(res.headers.get('X-Pagination-Page-Count') || '1', 10);
+    return { items: await res.json(), pages: isNaN(pages) ? 1 : pages };
+  }
+
+  async function traktAll(path) {
+    const out = [];
+    let page = 1;
+    let total = 1;
+    for (;;) {
+      const { items, pages } = await traktPage(path, page);
+      if (Array.isArray(items)) out.push(...items);
+      total = Math.min(Math.max(pages || 1, 1), 50);
+      if (page >= total || !items || !items.length) break;
+      page++;
+    }
+    return out;
+  }
+
+  function readTraktCache() {
+    const raw = local.get(KEYS.trakt);
+    if (!raw) return null;
+    try {
+      const c = JSON.parse(raw);
+      if (!c || c.user !== S.traktUser) return null;
+      return c;
+    } catch { return null; }
+  }
+
+  async function loadTrakt(force = false, silent = false) {
+    trakt.error = '';
+    if (!S.traktId || !S.traktUser) {
+      trakt.loaded = false;
+      renderTraktBar();
+      return;
+    }
+    if (!force) {
+      const c = readTraktCache();
+      if (c && Date.now() - c.ts < TTL.trakt) {
+        trakt.watched = new Set(c.watched || []);
+        trakt.ratings = new Map(c.ratings || []);
+        trakt.loaded = true;
+        trakt.ts = c.ts;
+        renderTraktBar();
+        return;
+      }
+    }
+    renderTraktBar(true);
+    try {
+      const user = encodeURIComponent(S.traktUser);
+      const [watchedArr, ratingsArr] = await Promise.all([
+        traktAll('/users/' + user + '/watched/movies'),
+        traktAll('/users/' + user + '/ratings/movies')
+      ]);
+      const watchedSet = new Set();
+      watchedArr.forEach((it) => {
+        const id = it && it.movie && it.movie.ids && it.movie.ids.tmdb;
+        if (id) watchedSet.add(id);
+      });
+      const ratingsMap = new Map();
+      ratingsArr.forEach((it) => {
+        const id = it && it.movie && it.movie.ids && it.movie.ids.tmdb;
+        if (id && it.rating) ratingsMap.set(id, it.rating);
+      });
+      trakt.watched = watchedSet;
+      trakt.ratings = ratingsMap;
+      trakt.loaded = true;
+      trakt.ts = Date.now();
+      local.set(KEYS.trakt, JSON.stringify({
+        ts: trakt.ts,
+        user: S.traktUser,
+        watched: Array.from(watchedSet),
+        ratings: Array.from(ratingsMap)
+      }));
+      $('hideWatched').disabled = false;
+      renderTraktBar();
+      if (!silent) toast('Trakt: ' + plural(watchedSet.size, 'vista', 'vistas') + ' · ' + plural(ratingsMap.size, 'nota', 'notas'));
+    } catch (err) {
+      trakt.loaded = false;
+      trakt.error = err && err.message ? err.message : 'No se pudo conectar con Trakt.';
+      renderTraktBar();
+      if (!silent) toast(trakt.error, 'err');
+    }
+  }
+
+  function renderTraktBar(loading = false) {
+    const bar = $('traktBar');
+    if (!S.traktId && !S.traktUser) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    bar.className = 'trakt-bar' + (loading ? '' : trakt.error ? ' err' : trakt.loaded ? ' ok' : '');
+
+    if (loading) {
+      bar.innerHTML = '<span class="dot"></span> <strong>Trakt</strong> sincronizando @' + esc(S.traktUser) + '… <span class="spinner"></span>';
+      return;
+    }
+    if (trakt.error) {
+      bar.innerHTML = '<span class="dot"></span> <strong>Trakt</strong> ' + esc(trakt.error) +
+        '<span class="spacer"></span><button class="link-btn" data-trakt-refresh>Reintentar</button>';
+      return;
+    }
+    if (!trakt.loaded) {
+      bar.innerHTML = '<span class="dot"></span> <strong>Trakt</strong> sin datos todavía.' +
+        '<span class="spacer"></span><button class="link-btn" data-trakt-refresh>Sincronizar</button>';
+      return;
+    }
+    bar.innerHTML = '<span class="dot"></span> <strong>' + esc(S.traktUser) + '</strong> · ' +
+      plural(trakt.watched.size, 'vista', 'vistas') + ' · ' +
+      plural(trakt.ratings.size, 'nota', 'notas') + ' · ' + timeAgo(trakt.ts) +
+      '<span class="spacer"></span><button class="link-btn" data-trakt-refresh>Actualizar</button>';  }
+
+  /* ================= RENDER CATÁLOGO ================= */
+  function cardHtml(m, index = 0) {
+    const id = Number(m.id);
+    const title = m.title || ('Película #' + id);
+    const year = (m.release_date || '').slice(0, 4);
+    const poster = imgUrl('w342', m.poster_path);
+    const srcset = posterSrcset(m.poster_path);
+    const eager = index < 4;
+    const tmdbScore = m.vote_average ? Number(m.vote_average).toFixed(1) : '';
+    const saved = watchMap.has(id);
+    const watched = trakt.loaded && trakt.watched.has(id);
+    const mine = trakt.loaded ? trakt.ratings.get(id) : 0;
+
+    // La puntuación principal es la de IMDb. Mientras OMDb responde se muestra
+    // la de TMDb, que se sustituye sola al llegar (ver applyImdb).
+    const cached = imdbCache && imdbCache[String(id)] ? imdbCache[String(id)].rating : null;
+    const imdbScore = cached && /^\d+(\.\d+)?$/.test(String(cached)) ? String(cached) : '';
+    let badge = '';
+    if (imdbScore) {
+      badge = '<span class="badge badge-main imdb" data-score="' + id + '" data-tmdb="' + tmdbScore + '"' +
+        ' title="IMDb ' + imdbScore + (tmdbScore ? ' · TMDb ' + tmdbScore : '') + '">IMDb ' + imdbScore + '</span>';
+    } else if (tmdbScore) {
+      badge = '<span class="badge badge-main tmdb" data-score="' + id + '" data-tmdb="' + tmdbScore + '"' +
+        ' title="TMDb ' + tmdbScore + (S.omdb ? ' · cargando IMDb…' : '') + '"><span class="star">★</span> ' + tmdbScore + '</span>';
+    }
+
+    const meta = [year || '—', imdbScore && tmdbScore ? 'TMDb ' + tmdbScore : ''].filter(Boolean).join(' · ');
+
+    return '<article class="card" data-id="' + id + '" tabindex="0" role="button" aria-label="' + escapeAttr(title) + '">' +
+      '<div class="poster">' +
+        (poster
+          ? '<img src="' + poster + '"' + (srcset ? ' srcset="' + srcset + '" sizes="(max-width: 520px) 44vw, (max-width: 900px) 30vw, 210px"' : '') +
+            ' alt="" loading="' + (eager ? 'eager' : 'lazy') + '" decoding="async" fetchpriority="' + (eager ? 'high' : 'auto') +
+            '" referrerpolicy="no-referrer" width="342" height="513">'
+          : '<div class="no-poster">Sin póster</div>') +
+        badge +
+        '<button class="fav' + (saved ? ' on' : '') + '" data-fav="' + id + '" aria-pressed="' + saved + '"' +
+          ' aria-label="' + (saved ? 'Quitar de la watchlist' : 'Añadir a la watchlist') + '">' + (saved ? '♥' : '♡') + '</button>' +
+        ((watched || mine)
+          ? '<div class="trakt-flags">' +
+              (watched ? '<span class="flag watched">✓ Vista</span>' : '') +
+              (mine ? '<span class="flag rated">★ ' + mine + '/10</span>' : '') +
+            '</div>'
+          : '') +
+        '<div class="hover"><span>Ver detalles</span></div>' +
+      '</div>' +
+      '<div class="card-body"><h2 title="' + escapeAttr(title) + '">' + esc(title) + '</h2>' +
+        '<p class="meta">' + esc(meta) + '</p></div>' +
+    '</article>';
+  }
+
+  function renderGrid(list, emptyMsg) {
+    const grid = $('movieGrid');
+    if (!list.length) {
+      grid.innerHTML = '<div class="empty"><span class="big">🍿</span><p>' + esc(emptyMsg || 'No hay resultados con estos filtros.') + '</p></div>';
+      return;
+    }
+    const html = list.map((m, i) => { rememberMovie(m); return cardHtml(m, i); }).join('');
+    grid.innerHTML = html;
+  }
+
+  function renderSkeletons(n = 12) {
+    let html = '';
+    for (let i = 0; i < n; i++) {
+      html += '<div class="card skeleton"><div class="poster"></div>' +
+        '<div class="card-body"><div class="sk-line"></div><div class="sk-line short"></div></div></div>';
+    }
+    $('movieGrid').innerHTML = html;
+  }
+
+  /* ================= LISTA ================= */
+  async function reloadData() {
+    if (state.mode === 'watchlist') { renderWatchlist(); writeParams(); return; }
+    if (!S.tmdb) { showEmptyNoKey(); return; }
+
+    const myId = ++state.reqId;
+    const f = filters();
+    if (f.sort.indexOf('imdb.') === 0 && !S.omdb) {
+      $('sortFilter').value = 'vote_average.desc';
+      f.sort = 'vote_average.desc';
+      toast('Para ordenar por IMDb necesitas una clave de OMDb.', 'warn');
+    }
+    syncImdbControls();
+    setBusy(true);
+    $('pagination').classList.toggle('hidden', false);
+    if (!$('movieGrid').children.length) renderSkeletons();
+    $('movieGrid').classList.add('busy');
+    setStatus(f.q ? 'Buscando «' + f.q + '»…' : 'Cargando películas…');
+    setAux(f.hideWatched && !trakt.loaded ? '«Solo no vistas» necesita que Trakt esté sincronizado.' : '');
+
+    try {
+      if (f.sort.indexOf('imdb.') === 0) {
+        // Al entrar en el ranking no se deja la rejilla anterior visible: parece un ranking ya ordenado.
+        if (imdbPool.sig !== imdbSignature(f)) renderSkeletons(12);
+        await renderImdbRank(f, myId);
+        return;
+      }
+      const effVotes = minVotesEffective(f);
+      let data;
+      let results;
+
+      if (f.q) {
+        const params = { query: f.q, page: state.page, language: LANG, include_adult: 'false' };
+        if (f.year) params.primary_release_year = f.year;
+        data = await tmdb('/search/movie', params, { ttl: TTL.list });
+        results = (data.results || []).slice();
+        if (f.genre) results = results.filter((m) => (m.genre_ids || []).indexOf(parseInt(f.genre, 10)) !== -1);
+        if (f.from && !f.year) results = results.filter((m) => m.release_date && m.release_date >= f.from + '-01-01');
+        if (effVotes > 0) results = results.filter((m) => (m.vote_count || 0) >= effVotes);
+        const [field, dir] = f.sort.split('.');
+        if (field !== 'revenue') {
+          const sign = dir === 'asc' ? 1 : -1;
+          results.sort((a, b) => {
+            const va = typeof a[field] === 'string' ? a[field] : (a[field] || 0);
+            const vb = typeof b[field] === 'string' ? b[field] : (b[field] || 0);
+            return (va > vb ? 1 : va < vb ? -1 : 0) * sign;
+          });
+        }
+      } else {
+        const params = {
+          language: LANG,
+          sort_by: f.sort,
+          page: state.page,
+          include_adult: 'false'
+        };
+        if (f.year) params.primary_release_year = f.year;
+        else if (f.from) params['primary_release_date.gte'] = f.from + '-01-01';
+        if (f.genre) params.with_genres = f.genre;
+        if (effVotes > 0) params['vote_count.gte'] = String(effVotes);
+
+        const withoutGenres = [];
+        const withoutKeywords = [];
+        f.exclusions.forEach((k) => {
+          const ex = EXCLUSIONS[k];
+          if (!ex) return;
+          if (ex.genre) withoutGenres.push(ex.genre);
+          if (ex.keyword) withoutKeywords.push(ex.keyword);
+        });
+        if (withoutGenres.length) params.without_genres = withoutGenres.join(',');
+        if (withoutKeywords.length) params.without_keywords = withoutKeywords.join(',');
+
+        data = await tmdb('/discover/movie', params, { ttl: TTL.list });
+        results = data.results || [];
+      }
+
+      if (myId !== state.reqId) return;
+
+      const serverCount = results.length;
+      results = clientFilters(results, f);
+
+      state.totalPages = Math.max(1, Math.min(data.total_pages || 1, MAX_PAGES));
+      state.totalResults = data.total_results || 0;
+
+      renderGrid(results, f.q
+        ? 'No se encontraron películas para «' + f.q + '» con estos filtros.'
+        : 'No se encontraron películas con estos filtros. Prueba a quitar alguno.');
+
+      updatePagination();
+      updateStatus(f, serverCount, results.length);
+      enrichImdb(results, myId);
+      writeParams();
+    } catch (err) {
+      if (myId !== state.reqId) return;
+      const msg = tmdbMessage(err);
+      $('movieGrid').innerHTML = '<div class="empty"><span class="big">⚠️</span><p>' + esc(msg) + '</p></div>';
+      setStatus(msg, 'error');
+      if (err && err.status === 401) {
+        S.tmdb = '';
+        persistSettings();
+        openConfig();
+        setConfigError('La API key de TMDb no es válida. Vuelve a introducirla.');
+      }
+    } finally {
+      if (myId === state.reqId) {
+        setBusy(false);
+        $('movieGrid').classList.remove('busy');
+      }
+    }
+  }
+
+  function updateStatus(f, serverCount, shown) {
+    const extra = [];
+    const filtered = serverCount - shown - state.hiddenWatched;
+    if (filtered > 0) extra.push(plural(filtered, 'filtrada', 'filtradas'));
+    if (state.hiddenWatched > 0) extra.push(plural(state.hiddenWatched, 'oculta', 'ocultas') + ' por vistas');
+    const suffix = extra.length ? ' · ' + extra.join(' · ') : '';
+
+    if (f.q) {
+      const total = serverCount !== shown ? ' de ' + numFmt.format(serverCount) : '';
+      setStatus(plural(shown, 'resultado', 'resultados') + total + ' para «' + f.q + '»' + suffix);
+    } else {
+      setStatus(state.totalResults ? plural(state.totalResults, 'película', 'películas') + suffix : 'Sin resultados' + suffix);
+    }
+    if (state.totalPages >= MAX_PAGES && !S.omdb) {
+      setAux('TMDb limita los resultados a ' + MAX_PAGES + ' páginas.');
+    }
+  }
+
+  function updatePagination() {
+    const imdbMode = $('sortFilter').value.indexOf('imdb.') === 0;
+    $('pageInfo').innerHTML = 'Página <strong>' + state.page + '</strong> de ' + state.totalPages +
+      (imdbMode ? ' · ranking IMDb' : '');
+    $('prevBtn').disabled = state.page <= 1;
+    $('nextBtn').disabled = state.page >= state.totalPages;
+  }
+
+  /* ================= RANKING IMDb (local) =================
+     TMDb no permite ordenar por nota IMDb, así que se reúne un bloque de
+     candidatos con los filtros activos, se piden sus notas a OMDb (quedan en
+     caché) y se ordenan y paginan aquí. */
+  const RANK_KEY = 'cine.rank.v1';
+  let imdbPool = { sig: '', items: [], sourceTotal: 0, pages: IMDB_POOL_PAGES };
+
+  function saveRankPool() {
+    if (!imdbPool.sig || !imdbPool.items.length) return;
+    try {
+      session.set(RANK_KEY, JSON.stringify({
+        sig: imdbPool.sig,
+        pages: imdbPool.pages,
+        sourceTotal: imdbPool.sourceTotal,
+        items: imdbPool.items
+      }));
+    } catch {}
+  }
+  function loadRankPool() {
+    try {
+      const raw = session.get(RANK_KEY);
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (p && typeof p.sig === 'string' && Array.isArray(p.items) && p.items.length) {
+        imdbPool = {
+          sig: p.sig,
+          items: p.items,
+          sourceTotal: Number(p.sourceTotal) || 0,
+          pages: Math.min(IMDB_MAX_PAGES, Math.max(IMDB_POOL_PAGES, Number(p.pages) || IMDB_POOL_PAGES))
+        };
+      }
+    } catch {}
+  }
+  function dropRankPool() {
+    imdbPool = { sig: '', items: [], sourceTotal: 0, pages: IMDB_POOL_PAGES };
+    session.del(RANK_KEY);
+  }
+
+  function imdbSignature(f) {
+    return JSON.stringify([f.q, f.year, f.genre, f.from, f.minVotes, f.exclusions]);
+  }
+
+  function imdbInfoOf(id) {
+    const c = imdbCache && imdbCache[String(id)];
+    if (!c || !c.rating) return null;
+    const n = parseFloat(c.rating);
+    if (!isFinite(n)) return null;
+    return { rating: n, votes: Number(c.votes) || 0, via: c.via || '' };
+  }
+
+  function imdbRatingOf(id) {
+    const i = imdbInfoOf(id);
+    return i ? i.rating : null;
+  }
+
+  /** Una nota entra en el ranking solo si es fiable: IMDb ID de TMDb y votos suficientes. */
+  function imdbRankInfo(m) {
+    const i = imdbInfoOf(m.id);
+    if (!i || i.via !== 'id') return null;
+    if (i.votes < IMDB_RANK_MIN_VOTES) return null;
+    return i;
+  }
+
+  async function buildImdbCandidates(f, myId, pages = IMDB_POOL_PAGES) {
+    const minVotes = Math.max(f.minVotes, IMDB_MIN_VOTES);
+    const withoutGenres = [];
+    const withoutKeywords = [];
+    f.exclusions.forEach((k) => {
+      const ex = EXCLUSIONS[k];
+      if (!ex) return;
+      if (ex.genre) withoutGenres.push(ex.genre);
+      if (ex.keyword) withoutKeywords.push(ex.keyword);
+    });
+
+    const collected = [];
+    const seen = new Set();
+    const addAll = (data) => (data.results || []).forEach((m) => {
+      if (!m || !m.id || seen.has(m.id)) return;
+      seen.add(m.id);
+      collected.push(m);
+    });
+
+    let sourceTotal = 0;
+
+    if (f.q) {
+      const base = { query: f.q, language: LANG, include_adult: 'false' };
+      if (f.year) base.primary_release_year = f.year;
+      for (let p = 1; p <= pages; p++) {
+        if (myId !== state.reqId) return null;
+        const d = await tmdb('/search/movie', { ...base, page: p }, { ttl: TTL.list });
+        if (p === 1) sourceTotal = d.total_results || 0;
+        addAll(d);
+        if (!d.results || d.results.length < IMDB_PAGE_SIZE) break;
+      }
+    } else {
+      const base = {
+        language: LANG,
+        sort_by: 'popularity.desc',
+        include_adult: 'false',
+        'vote_count.gte': String(minVotes)
+      };
+      if (f.year) base.primary_release_year = f.year;
+      else if (f.from) base['primary_release_date.gte'] = f.from + '-01-01';
+      if (f.genre) base.with_genres = f.genre;
+      if (withoutGenres.length) base.without_genres = withoutGenres.join(',');
+      if (withoutKeywords.length) base.without_keywords = withoutKeywords.join(',');
+      for (let p = 1; p <= pages; p++) {
+        if (myId !== state.reqId) return null;
+        const d = await tmdb('/discover/movie', { ...base, page: p }, { ttl: TTL.list });
+        if (p === 1) sourceTotal = d.total_results || 0;
+        addAll(d);
+        if (!d.results || d.results.length < IMDB_PAGE_SIZE) break;
+      }
+    }
+
+    // El pool guarda todas las candidatas; «Solo no vistas» se aplica al pintar.
+    let pool = clientFilters(collected, { ...f, hideWatched: false });
+    if (f.q) {
+      if (f.genre) pool = pool.filter((m) => (m.genre_ids || []).indexOf(Number(f.genre)) !== -1);
+      if (f.from && !f.year) pool = pool.filter((m) => m.release_date && m.release_date >= f.from + '-01-01');
+      pool = pool.filter((m) => (m.vote_count || 0) >= minVotes);
+    }
+    return { items: pool, sourceTotal };
+  }
+
+  async function ensureImdbRatings(list, myId) {
+    if (!S.omdb) return { fatal: false };
+    if (!imdbCache) imdbCache = readImdbCache();
+    const now = Date.now();
+    const missing = [];
+    const seen = new Set();
+    list.forEach((m) => {
+      const key = String(m.id);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const c = imdbCache[key];
+      const ttl = c && c.rating ? TTL.imdb : 6 * 36e5;
+      const fresh = c && now - c.ts < ttl;
+      // Cachés antiguas sin votos/procedencia se completan para poder rankear.
+      const needsMeta = !!(c && c.rating && (c.votes == null || !c.via));
+      if (!fresh || needsMeta) missing.push(m);
+    });
+    if (!missing.length) return { fatal: false };
+
+    const total = missing.length;
+    let done = 0;
+    let fatal = false;
+    setAux('Consultando notas IMDb: 0/' + total + '…');
+
+    const worker = async () => {
+      while (missing.length && !fatal) {
+        if (myId !== state.reqId) return;
+        const m = missing.shift();
+        let found = null;
+        try {
+          found = await imdbLookupOnce(m);
+        } catch (err) {
+          if (err && err.fatal) fatal = true;
+        }
+        imdbCache[String(m.id)] = {
+          rating: found ? found.rating : null,
+          votes: found ? found.votes : 0,
+          via: found ? found.via : '',
+          ts: Date.now()
+        };
+        if (found) applyImdb(String(m.id), found.rating);
+        done++;
+        if (myId === state.reqId && (done % 5 === 0 || done === total)) {
+          setAux('Consultando notas IMDb: ' + done + '/' + total + '…');
+        }
+      }
+    };
+
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    saveImdbCache();
+    return { fatal };
+  }
+
+  async function renderImdbRank(f, myId) {
+    const sig = imdbSignature(f);
+    let pool;
+    let sourceTotal;
+    let pages;
+    let fatal = false;
+
+    if (imdbPool.sig === sig && imdbPool.items.length) {
+      pool = imdbPool.items.slice();
+      sourceTotal = imdbPool.sourceTotal;
+      pages = imdbPool.pages;
+      // Autocuración: si falta alguna nota (caché borrada), se recupera.
+      const r = await ensureImdbRatings(pool, myId);
+      fatal = !!(r && r.fatal);
+      if (myId !== state.reqId) return;
+    } else {
+      setStatus('Reuniendo candidatos para el ranking IMDb…');
+      const built = await buildImdbCandidates(f, myId, IMDB_POOL_PAGES);
+      if (!built || myId !== state.reqId) return;
+      pool = built.items;
+      sourceTotal = built.sourceTotal;
+      pages = IMDB_POOL_PAGES;
+      if (!pool.length) {
+        renderGrid([], 'No hay películas con estos filtros.');
+        state.totalPages = 1;
+        state.page = 1;
+        updatePagination();
+        setStatus('Sin resultados');
+        setAux('');
+        syncImdbControls();
+        writeParams();
+        return;
+      }
+      const r2 = await ensureImdbRatings(pool, myId);
+      fatal = fatal || !!(r2 && r2.fatal);
+      if (myId !== state.reqId) return;
+      imdbPool = { sig, items: pool.slice(), sourceTotal, pages };
+      saveRankPool();
+    }
+
+    const minRating = f.imdbMin || 0;
+    const onlyUnseen = !!(f.hideWatched && trakt.loaded);
+    const dir = f.sort === 'imdb.asc' ? 1 : -1;
+    const rated = pool.slice().sort((a, b) => {
+      const ia = imdbRankInfo(a);
+      const ib = imdbRankInfo(b);
+      if (!ia && !ib) return 0;
+      if (!ia) return 1;   // sin nota fiable: siempre al final
+      if (!ib) return -1;
+      return (ia.rating - ib.rating) * dir;
+    });
+
+    const withRating = rated.filter((m) => !!imdbRankInfo(m));
+    const excluded = rated.length - withRating.length;
+
+    if (!withRating.length) {
+      // Sin notas verificadas no se puede presentar el orden de TMDb como ranking IMDb.
+      state.totalPages = 1;
+      state.page = 1;
+      renderGrid(pool.slice(0, IMDB_PAGE_SIZE), 'No hay películas con estos filtros.');
+      updatePagination();
+      setStatus('Sin notas IMDb fiables todavía');
+      setAux('No hay notas verificadas con al menos ' + IMDB_RANK_MIN_VOTES + ' votos para estas ' +
+        plural(pool.length, 'candidata', 'candidatas') + '. Se muestra el orden de TMDb: añade candidatas o revisa la clave de OMDb.', 'warn');
+      syncImdbControls();
+      writeParams();
+      return;
+    }
+
+    const base = minRating ? withRating.filter((m) => imdbRankInfo(m).rating >= minRating) : withRating;
+    const visible = onlyUnseen ? base.filter((m) => !trakt.watched.has(m.id)) : base;
+    const hiddenByWatch = base.length - visible.length;
+    state.hiddenWatched = hiddenByWatch;
+
+    if (!visible.length) {
+      const allSeen = onlyUnseen && base.length > 0;
+      renderGrid([], allSeen
+        ? 'Todas las ' + plural(base.length, 'candidata', 'candidatas') + ' con estos filtros ya están vistas.'
+        : 'Ninguna de las ' + plural(withRating.length, 'candidata', 'candidatas') + ' llega a ' + fmtRating(minRating) + ' en IMDb.');
+      state.totalPages = 1;
+      state.page = 1;
+      updatePagination();
+      setStatus(allSeen ? '0 sin ver' : 'Sin resultados con IMDb ≥ ' + fmtRating(minRating));
+      setAux(allSeen
+        ? 'Desactiva «Solo no vistas» o añade más candidatas al ranking.'
+        : 'Baja la nota mínima o añade más candidatas al ranking.');
+      syncImdbControls();
+      writeParams();
+      return;
+    }
+
+    const total = visible.length;
+    state.totalPages = Math.max(1, Math.ceil(total / IMDB_PAGE_SIZE));
+    state.page = Math.min(Math.max(1, state.page), state.totalPages);
+    const slice = visible.slice((state.page - 1) * IMDB_PAGE_SIZE, state.page * IMDB_PAGE_SIZE);
+
+    renderGrid(slice, 'No hay películas con estos filtros.');
+    updatePagination();
+    writeParams();
+    syncImdbControls();
+
+    const extras = [];
+    if (excluded) extras.push(plural(excluded, 'sin nota fiable', 'sin nota fiable'));
+    if (hiddenByWatch) extras.push(plural(hiddenByWatch, 'oculta por vista', 'ocultas por vistas'));
+    const suffix = extras.length ? ' · ' + extras.join(' · ') : '';
+
+    setStatus((minRating
+      ? plural(total, 'película', 'películas') + ' con IMDb ≥ ' + fmtRating(minRating)
+      : plural(total, 'película', 'películas') + ' ordenadas por nota IMDb') + suffix);
+
+    const reliability = excluded
+      ? ' Solo cuentan notas verificadas por el ID de TMDb con al menos ' + IMDB_RANK_MIN_VOTES + ' votos en IMDb.'
+      : '';
+    if (fatal) {
+      setAux('OMDb rechazó la clave o se agotó el límite diario: el ranking se completa con las notas ya guardadas.', 'error');
+    } else if (sourceTotal && sourceTotal > pool.length) {
+      setAux((pages >= IMDB_MAX_PAGES
+        ? 'Ranking calculado sobre las ' + (IMDB_MAX_PAGES * IMDB_PAGE_SIZE) +
+          ' candidatas máximas de TMDb (las más populares con estos filtros).'
+        : 'Ranking calculado sobre ' + plural(pool.length, 'película', 'películas') +
+          ' de TMDb (las más populares con estos filtros). Puedes añadir más candidatas abajo.') + reliability);
+    } else {
+      setAux('Ranking IMDb de ' + plural(pool.length, 'película', 'películas') + '.' + reliability);
+    }
+  }
+
+  async function expandImdbRank() {
+    const f = filters();
+    if (f.sort.indexOf('imdb.') !== 0 || !imdbPool.sig) return;
+    if (imdbPool.pages >= IMDB_MAX_PAGES) return;
+
+    const addPages = Math.min(3, IMDB_MAX_PAGES - imdbPool.pages);
+    const addCount = addPages * IMDB_PAGE_SIZE;
+    const ok = window.confirm(
+      'Se añadirán hasta ' + addCount + ' candidatas más y se consultarán como máximo ' +
+      addCount + ' notas nuevas a OMDb (la cuota gratuita es de 1.000 al día). ¿Continuar?'
+    );
+    if (!ok) return;
+
+    const myId = ++state.reqId;
+    setBusy(true);
+    $('movieGrid').classList.add('busy');
+    $('rankMoreBtn').disabled = true;
+    $('rankMoreBtn').textContent = 'Ampliando…';
+    setStatus('Ampliando el ranking IMDb…');
+    setAux('Buscando ' + addCount + ' candidatas más en TMDb…');
+
+    try {
+      const built = await buildImdbCandidates(f, myId, imdbPool.pages + addPages);
+      if (!built || myId !== state.reqId) return;
+      const r = await ensureImdbRatings(built.items, myId);
+      const fatal = !!(r && r.fatal);
+      if (myId !== state.reqId) return;
+      imdbPool = {
+        sig: imdbSignature(f),
+        items: built.items.slice(),
+        sourceTotal: built.sourceTotal,
+        pages: imdbPool.pages + addPages
+      };
+      saveRankPool();
+      await renderImdbRank(f, myId);
+      if (fatal && myId === state.reqId) {
+        setAux('OMDb rechazó la clave o se agotó el límite diario: el ranking se completa con las notas ya guardadas.', 'error');
+      }
+    } catch (err) {
+      if (myId !== state.reqId) return;
+      setAux('No se pudo ampliar el ranking: ' + (err && err.message ? err.message : 'error de red'), 'error');
+    } finally {
+      if (myId === state.reqId) {
+        setBusy(false);
+        $('movieGrid').classList.remove('busy');
+        syncImdbControls();
+      }
+    }
+  }
+
+  function showEmptyNoKey() {
+    $('movieGrid').innerHTML = '<div class="empty"><span class="big">🔑</span>' +
+      '<p>Necesitas una API key de TMDb para explorar el catálogo. Es gratis y tarda un minuto.</p>' +
+      '<button class="btn primary" id="emptyConfig">Configurar ahora</button></div>';
+    setStatus('');
+    $('pagination').classList.add('hidden');
+    const b = $('emptyConfig');
+    if (b) b.addEventListener('click', () => openConfig(true));
+  }
+
+  /* ================= WATCHLIST (vista) ================= */
+  function renderWatchlist() {
+    state.reqId++;
+    setBusy(false);
+    $('pagination').classList.add('hidden');
+    $('movieGrid').classList.remove('busy');
+    const f = filters();
+
+    let list = watch.slice();
+    if (f.q) {
+      const q = f.q.toLowerCase();
+      list = list.filter((w) => (w.title || '').toLowerCase().indexOf(q) !== -1);
+    }
+    if (f.year) list = list.filter((w) => String((w.release_date || '').slice(0, 4)) === f.year);
+
+    const [field, dir] = f.sort.split('.');
+    const sign = dir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      if (field === 'title') return String(a.title || '').localeCompare(String(b.title || ''), 'es') * sign;
+      if (field === 'release_date') return ((a.release_date || '').localeCompare(b.release_date || '')) * sign;
+      if (field === 'vote_average') return ((a.vote_average || 0) - (b.vote_average || 0)) * sign;
+      return (b.added || 0) - (a.added || 0);
+    });
+
+    if (!watch.length) {
+      $('movieGrid').innerHTML = '<div class="empty"><span class="big">♡</span>' +
+        '<p>Tu watchlist está vacía. Pulsa el corazón de cualquier película para guardarla aquí, en este navegador.</p>' +
+        '<button class="btn" id="backCatalog">Explorar el catálogo</button></div>';
+      setStatus('0 películas guardadas');
+      const b = $('backCatalog');
+      if (b) b.addEventListener('click', () => setMode('catalog'));
+      return;
+    }
+
+    renderGrid(list, 'Ninguna película de tu watchlist coincide con la búsqueda.');
+    const filtered = list.length !== watch.length;
+    setStatus(filtered
+      ? numFmt.format(list.length) + ' de ' + numFmt.format(watch.length) + ' en tu watchlist'
+      : numFmt.format(watch.length) + (watch.length === 1 ? ' película guardada' : ' películas guardadas') + ' en este navegador');
+    setAux('');
+    hydrateWatchlist();
+    writeParams();
+    updateWatchCount();
+    enrichImdb(list, state.reqId);
+  }
+
+  let hydrating = false;
+  const hydrateTried = new Set();
+  async function hydrateWatchlist() {
+    if (hydrating || !S.tmdb) return;
+    const missing = watch.filter((w) => !w.title && !hydrateTried.has(w.id)).slice(0, 60);
+    if (!missing.length) return;
+    hydrating = true;
+    missing.forEach((w) => hydrateTried.add(w.id));
+    setAux('Completando datos de ' + plural(missing.length, 'película guardada', 'películas guardadas') + '…');
+    let changed = false;
+    try {
+      for (let i = 0; i < missing.length; i += 5) {
+        const chunk = missing.slice(i, i + 5);
+        const movies = await Promise.all(chunk.map((w) =>
+          tmdb('/movie/' + w.id, { language: LANG }, { ttl: TTL.detail }).catch(() => null)
+        ));
+        movies.forEach((m) => {
+          if (!m || !m.id) return;
+          rememberMovie(m);
+          const entry = watchMap.get(m.id);
+          if (entry && m.title) {
+            entry.title = m.title;
+            entry.release_date = m.release_date || entry.release_date;
+            entry.poster_path = safePath(m.poster_path) || entry.poster_path;
+            entry.vote_average = Number(m.vote_average) || entry.vote_average;
+            changed = true;
+          }
+        });
+      }
+      if (changed) {
+        saveWatchlist();
+        if (state.mode === 'watchlist') renderWatchlist();
+      }
+    } catch {
+      /* silencio: se reintentará al abrir la vista de nuevo */
+    } finally {
+      hydrating = false;
+      if (!changed) setAux('');
+    }
+  }
+
+  /* ================= IMDb (OMDb) ================= */
+  function readImdbCache() {
+    try { return JSON.parse(local.get(KEYS.imdb) || '{}') || {}; } catch { return {}; }
+  }
+  let imdbCache = null;
+  function saveImdbCache() {
+    if (!imdbCache) return;
+    const entries = Object.entries(imdbCache).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0)).slice(0, 1200);
+    local.set(KEYS.imdb, JSON.stringify(Object.fromEntries(entries)));
+  }
+
+  const IMDB_RATING = /^\d+(\.\d+)?$/;
+
+  function omdbQuery(params) {
+    const p = new URLSearchParams({ apikey: S.omdb, type: 'movie' });
+    Object.keys(params).forEach((k) => { if (params[k]) p.set(k, params[k]); });
+    return API.OMDB + '?' + p.toString();
+  }
+  function omdbFatal(msg) {
+    return /invalid api key|request limit|too many|limit reached/i.test(String(msg || ''));
+  }
+  function parseImdbVotes(v) {
+    const n = parseInt(String(v || '').replace(/[^\d]/g, ''), 10);
+    return isFinite(n) ? n : 0;
+  }
+  function omdbScore(data) {
+    if (!data || data.Response === 'False') return null;
+    const rating = String(data.imdbRating || '');
+    if (!IMDB_RATING.test(rating)) return null;
+    return { rating, votes: parseImdbVotes(data.imdbVotes) };
+  }
+
+  async function imdbIdFromTmdb(id) {
+    try {
+      const d = await tmdb('/movie/' + Number(id) + '/external_ids', {}, { ttl: TTL.detail });
+      return d && typeof d.imdb_id === 'string' ? d.imdb_id : '';
+    } catch { return ''; }
+  }
+
+  /**
+   * Variante para lotes (ranking IMDb): el imdb_id de TMDb es fiable y su API
+   * es mucho más generosa que la de OMDb, así que se resuelve primero el ID y
+   * se hace una única consulta por película. Si TMDb no tiene ID, se usa la
+   * cascada por título.
+   */
+  async function lookupImdbById(m) {
+    const imdbId = await imdbIdFromTmdb(m.id);
+    if (!imdbId) return lookupImdb(m);
+    const data = await httpJson(omdbQuery({ i: imdbId }), { ttl: TTL.imdb, retries: 0 });
+    if (data && data.Response === 'False') {
+      const msg = String(data.Error || '');
+      if (omdbFatal(msg)) {
+        const err = new Error(msg);
+        err.fatal = true;
+        throw err;
+      }
+      return lookupImdb(m);
+    }
+    const score = omdbScore(data);
+    return score ? { ...score, via: 'id' } : null;
+  }
+
+  /**
+   * TMDb no devuelve `imdb_id` en los listados, así que se prueba por título
+   * original + año (lo más fiable), luego por el título traducido y, si todo
+   * falla, se pide el imdb_id real a TMDb y se consulta OMDb por ID.
+   */
+  async function lookupImdb(m) {
+    const year = (m.release_date || '').slice(0, 4);
+    const orig = String(m.original_title || '').trim();
+    const title = String(m.title || '').trim();
+
+    const tries = [];
+    if (m.imdb_id) tries.push({ i: m.imdb_id });
+    if (orig) tries.push(year ? { t: orig, y: year } : { t: orig });
+    if (title && title !== orig) tries.push(year ? { t: title, y: year } : { t: title });
+
+    for (const params of tries) {
+      const data = await httpJson(omdbQuery(params), { ttl: TTL.imdb, retries: 0 });
+      if (data && data.Response === 'False') {
+        const msg = String(data.Error || '');
+        if (omdbFatal(msg)) {
+          const err = new Error(msg);
+          err.fatal = true;
+          throw err;
+        }
+        continue;
+      }
+      const score = omdbScore(data);
+      if (score) return { ...score, via: params.i ? 'id' : 'title' };
+    }
+
+    // El imdb_id de TMDb es la fuente fiable cuando el título no coincide.
+    if (!m.imdb_id) {
+      const imdbId = await imdbIdFromTmdb(m.id);
+      if (imdbId) {
+        const data = await httpJson(omdbQuery({ i: imdbId }), { ttl: TTL.imdb, retries: 0 });
+        if (data && data.Response === 'False' && omdbFatal(String(data.Error || ''))) {
+          const err = new Error(String(data.Error));
+          err.fatal = true;
+          throw err;
+        }
+        const score = omdbScore(data);
+        if (score) return { ...score, via: 'id' };
+      }
+    }
+
+    // Último recurso: mismo título sin año (estrenos con año distinto en OMDb).
+    if (orig && year) {
+      const data = await httpJson(omdbQuery({ t: orig }), { ttl: TTL.imdb, retries: 0 });
+      if (data && data.Response === 'False' && omdbFatal(String(data.Error || ''))) {
+        const err = new Error(String(data.Error));
+        err.fatal = true;
+        throw err;
+      }
+      const score = omdbScore(data);
+      if (score) return { ...score, via: 'title' };
+    }
+
+    return null;
+  }
+
+  // Evita pedir dos veces la misma nota si dos vistas se cargan a la vez.
+  const imdbPending = new Map();
+  function imdbLookupOnce(m) {
+    const key = String(m.id);
+    if (imdbPending.has(key)) return imdbPending.get(key);
+    const p = lookupImdbById(m).finally(() => imdbPending.delete(key));
+    imdbPending.set(key, p);
+    return p;
+  }
+
+  async function enrichImdb(movies, reqId) {    if (!S.omdb) return;
+    const pending = movies.filter((m) => m && m.id && (m.title || m.original_title));
+    if (!pending.length) return;
+    if (!imdbCache) imdbCache = readImdbCache();
+
+    const now = Date.now();
+    const queue = [];
+    const seen = new Set();
+    const NEGATIVE_TTL = 6 * 36e5;
+    pending.forEach((m) => {
+      const key = String(m.id);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const c = imdbCache[key];
+      const ttl = c && c.rating ? TTL.imdb : NEGATIVE_TTL;
+      const fresh = c && now - c.ts < ttl;
+      const needsMeta = !!(c && c.rating && (c.votes == null || !c.via));
+      if (fresh && !needsMeta) applyImdb(key, c.rating);
+      else queue.push(m);
+    });
+    if (!queue.length) return;
+
+    let done = 0;
+    let failures = 0;
+    const total = queue.length;
+    setAux('Puntuaciones IMDb: 0/' + total);
+
+    const worker = async () => {
+      while (queue.length) {
+        if (reqId !== state.reqId) return;
+        const m = queue.shift();
+        const key = String(m.id);
+        try {
+          // Por ID primero: 1 consulta a OMDb por película y sin falsos positivos.
+          const found = await imdbLookupOnce(m);
+          imdbCache[key] = {
+            rating: found ? found.rating : null,
+            votes: found ? found.votes : 0,
+            via: found ? found.via : '',
+            ts: Date.now()
+          };
+          if (found) {
+            applyImdb(key, found.rating);
+            failures = 0;
+          } else {
+            failures++;
+          }
+        } catch (err) {
+          if (err && err.fatal) { failures = 99; break; }
+          failures++;
+          if (failures >= 5) break;
+        }
+        done++;
+        if (reqId === state.reqId && (done % 4 === 0 || done === total)) {
+          setAux('Puntuaciones IMDb: ' + done + '/' + total);
+        }
+      }
+    };
+
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    saveImdbCache();
+    if (reqId !== state.reqId) return;
+    if (failures >= 99) setAux('OMDb rechazó la clave o se agotó el límite diario.', 'error');
+    else if (failures >= 5) setAux('OMDb no responde (¿límite diario?). Se reintentará más tarde.', 'error');
+    else setAux('');
+  }
+
+  function applyImdb(key, rating) {
+    if (!rating || !IMDB_RATING.test(String(rating))) return;
+    all('[data-score="' + key + '"]').forEach((node) => {
+      const tmdb = node.dataset.tmdb || '';
+      node.className = 'badge badge-main imdb';
+      node.textContent = 'IMDb ' + rating;
+      node.title = 'IMDb ' + rating + (tmdb ? ' · TMDb ' + tmdb : '');
+      // La tarjeta pasa a mostrar IMDb como nota principal; TMDb queda como dato secundario.
+      const card = node.closest ? node.closest('.card') : null;
+      const meta = card ? card.querySelector('.meta') : null;
+      if (meta && tmdb && meta.textContent.indexOf('TMDb') === -1) {
+        meta.textContent += ' · TMDb ' + tmdb;
+      }
+    });
+  }
+
+  /* ================= DETALLE ================= */
+  let lastFocus = null;
+
+  function openDetail(id) {
+    if (!$('detailModal').classList.contains('open')) lastFocus = document.activeElement;
+    state.detailId = id;
+    state.personId = null;
+    state.personFrom = null;
+    const cached = movieIndex.get(id);
+    $('detailContent').innerHTML = cached
+      ? '<div class="hero"><div class="hero-poster">' +
+          (cached.poster_path ? '<img src="' + imgUrl('w342', cached.poster_path) + '" alt="">' : '<div class="no-poster">Sin póster</div>') +
+        '</div><div class="hero-info"><h2>' + esc(cached.title || 'Cargando…') + '</h2>' +
+        '<div class="meta">' + ((cached.release_date || '').slice(0, 4) || '') + '</div></div></div>' +
+        '<div class="skeleton-block"><span class="spinner"></span> Cargando detalles…</div>'
+      : '<div class="skeleton-block"><span class="spinner"></span> Cargando detalles…</div>';
+
+    $('detailModal').classList.add('open');
+    document.body.classList.add('locked');
+    $('detailModal').scrollTop = 0;
+    $('closeDetail').focus();
+    syncPeliUrl();
+
+    loadDetail(id);
+  }
+
+  async function loadDetail(id) {
+    try {
+      const m = await tmdb('/movie/' + id, {
+        language: LANG,
+        append_to_response: 'credits,videos,watch/providers,external_ids'
+      }, { ttl: TTL.detail });
+
+      if (state.detailId !== id || state.personId) return;
+      rememberMovie(m);
+      renderDetail(m);
+      loadScores(m);
+    } catch (err) {
+      if (state.detailId !== id || state.personId) return;
+      $('detailContent').innerHTML = '<div class="error-block">' +
+        esc(tmdbMessage(err)) + '<br><br><button class="btn" id="retryDetail">Reintentar</button></div>';
+      const b = $('retryDetail');
+      if (b) b.addEventListener('click', () => loadDetail(id));
+    }
+  }
+
+  function renderDetail(m) {
+    const title = m.title || 'Sin título';
+    const year = (m.release_date || '').slice(0, 4);
+    const backdrop = imgUrl('w1280', m.backdrop_path);
+    const poster = imgUrl('w342', m.poster_path);
+    const genres = (m.genres || []).map((g) => g.name).join(' · ');
+    const saved = watchMap.has(m.id);
+    const mine = trakt.loaded ? trakt.ratings.get(m.id) : 0;
+    const watched = trakt.loaded && trakt.watched.has(m.id);
+    const imdbId = (m.external_ids && m.external_ids.imdb_id) || m.imdb_id || '';
+
+    const meta = [year, m.runtime ? fmtRuntime(m.runtime) : '', genres].filter(Boolean).join(' · ');
+    const score = m.vote_average
+      ? '★ ' + Number(m.vote_average).toFixed(1) + ' <span style="color:rgba(255,255,255,.55);font-weight:400">(' + numFmt.format(m.vote_count || 0) + ' votos)</span>'
+      : 'Sin puntuación';
+
+    const cast = (m.credits && m.credits.cast ? m.credits.cast : []).slice(0, 10);
+    const castHtml = cast.length
+      ? '<div class="cast">' + cast.map((c) => {
+          const photo = imgUrl('w185', c.profile_path);
+          return '<button class="cast-item" type="button" data-person="' + Number(c.id) + '" data-name="' + escapeAttr(c.name) + '"' +
+            ' aria-label="Ver ficha de ' + escapeAttr(c.name) + '">' +
+            (photo ? '<img src="' + photo + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">' : '<div class="ph">👤</div>') +
+            '<p>' + esc(c.name) + '</p><small>' + esc(c.character || '') + '</small></button>';
+        }).join('') + '</div>'
+      : '<p class="providers-note">Reparto no disponible.</p>';
+
+    const crew = (m.credits && m.credits.crew) || [];
+    const directors = crew.filter((c) => c.job === 'Director').slice(0, 2);
+    const crewHtml = directors.length
+      ? '<div class="crew-line"><span>Dirección:</span> ' + directors.map((d) =>
+          '<button type="button" data-person="' + Number(d.id) + '" data-name="' + escapeAttr(d.name) + '">' + esc(d.name) + '</button>'
+        ).join(', ') + '</div>'
+      : '';
+
+    const videos = (m.videos && m.videos.results) || [];
+    const trailer = videos.find((v) => v.site === 'YouTube' && v.type === 'Trailer') || videos.find((v) => v.site === 'YouTube');
+    const trailerHtml = trailer
+      ? '<div class="section"><a class="trailer" href="https://www.youtube.com/watch?v=' + encodeURIComponent(trailer.key) +
+        '" target="_blank" rel="noopener noreferrer">▶ Ver tráiler</a></div>'
+      : '';
+
+    const wp = (m['watch/providers'] && m['watch/providers'].results) || {};
+    const region = S.region;
+    const regionData = wp[region];
+    let providersHtml = '<p class="providers-note">No disponible en streaming en ' + esc(region) + '.</p>';
+    if (regionData) {
+      const seen = new Set();
+      const provs = []
+        .concat(regionData.flatrate || [], regionData.rent || [], regionData.buy || [])
+        .filter((p) => {
+          if (!p || seen.has(p.provider_id)) return false;
+          seen.add(p.provider_id);
+          return true;
+        });
+      if (provs.length) {
+        providersHtml = '<div class="providers">' + provs.map((p) => {
+          const logo = imgUrl('w92', p.logo_path);
+          return '<div class="provider" title="' + escapeAttr(p.provider_name) + '">' +
+            (logo ? '<img src="' + logo + '" alt="' + escapeAttr(p.provider_name) + '">' : '') + '</div>';
+        }).join('') + '</div>';
+      }
+    }
+    const otherRegions = Object.keys(wp).filter((r) => r !== region).slice(0, 6);
+    const regionNote = otherRegions.length
+      ? '<p class="providers-note" style="margin-top:8px">También hay datos para: ' + esc(otherRegions.join(', ')) +
+        ' (cámbialo en Ajustes).</p>'
+      : '';
+
+    const html =
+      '<div class="hero"' + (backdrop ? ' style="background-image:url(\'' + backdrop + '\')"' : '') + '>' +
+        '<div class="hero-poster">' + (poster ? '<img src="' + poster + '" alt="">' : '<div class="no-poster">Sin póster</div>') + '</div>' +
+        '<div class="hero-info">' +
+          '<h2>' + esc(title) + '</h2>' +
+          (m.original_title && m.original_title !== title ? '<div class="orig">' + esc(m.original_title) + '</div>' : '') +
+          '<div class="meta">' + esc(meta) + '</div>' +
+          '<div class="score" id="heroScore">' + score + '</div>' +
+          ((watched || mine)
+            ? '<div class="hero-badges">' +
+                (watched ? '<span class="flag watched">✓ Vista en Trakt</span>' : '') +
+                (mine ? '<span class="flag rated">★ Tu nota: ' + mine + '/10</span>' : '') +
+              '</div>'
+            : '') +
+          '<div class="overview">' + (m.overview ? esc(m.overview) : 'Sin sinopsis disponible.') + '</div>' +
+          '<div class="hero-actions">' +
+            '<button class="btn' + (saved ? ' on' : '') + '" id="detailFav" data-fav="' + Number(m.id) + '">' +
+              (saved ? '♥ En tu watchlist' : '♡ Añadir a watchlist') + '</button>' +
+            '<a class="btn" href="https://www.themoviedb.org/movie/' + Number(m.id) + '" target="_blank" rel="noopener noreferrer">TMDb</a>' +
+            (imdbId ? '<a class="btn" href="https://www.imdb.com/title/' + encodeURIComponent(imdbId) + '/" target="_blank" rel="noopener noreferrer">IMDb</a>' : '') +
+            '<a class="btn" href="https://trakt.tv/search?query=' + encodeURIComponent(title) + '" target="_blank" rel="noopener noreferrer">Trakt</a>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="sheet-body">' +
+        '<div class="section"><h3>Puntuaciones</h3><div class="ratings" id="ratingsGrid">' +
+          '<div class="rating-card muted"><span class="spinner"></span> Cargando puntuaciones…</div>' +
+        '</div></div>' +
+        trailerHtml +
+        '<div class="section"><h3>Reparto principal</h3>' + crewHtml + castHtml + '</div>' +
+        '<div class="section" id="similarSection"><h3>Películas similares</h3>' +
+          '<div class="similar" id="similarGrid"><div class="providers-note"><span class="spinner"></span> Buscando similares…</div></div>' +
+        '</div>' +
+        '<div class="section"><h3>Dónde verla</h3>' + providersHtml + regionNote + '</div>' +
+      '</div>';
+
+    $('detailContent').innerHTML = html;
+    loadSimilar(Number(m.id));
+  }
+
+  async function loadSimilar(id) {
+    try {
+      const d = await tmdb('/movie/' + id + '/recommendations', { language: LANG, page: 1 }, { ttl: TTL.detail });
+      if (state.detailId !== id || state.personId) return;
+      const box = $('similarGrid');
+      if (!box) return;
+      const list = (d.results || [])
+        .filter((m) => m && Number(m.id) !== Number(id))
+        .slice(0, 8);
+      if (!list.length) {
+        const sec = $('similarSection');
+        if (sec) sec.classList.add('hidden');
+        return;
+      }
+      box.innerHTML = list.map((m) => {
+        rememberMovie(m);
+        const imdb = imdbRatingOf(m.id);
+        const score = imdb != null
+          ? 'IMDb ' + fmtRating(imdb)
+          : (m.vote_average ? 'TMDb ' + fmtRating(m.vote_average) : '');
+        const poster = imgUrl('w185', m.poster_path);
+        return '<button class="sim-card" type="button" data-similar="' + Number(m.id) + '"' +
+          ' aria-label="Abrir ' + escapeAttr(m.title || 'película similar') + '">' +
+          (poster
+            ? '<img src="' + poster + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" width="185" height="278">'
+            : '<span class="ph">Sin póster</span>') +
+          '<span class="t">' + esc(m.title || 'Sin título') + '</span>' +
+          '<small class="s">' + esc([(m.release_date || '').slice(0, 4), score].filter(Boolean).join(' · ')) + '</small>' +
+        '</button>';
+      }).join('');
+    } catch {
+      const sec = $('similarSection');
+      if (sec) sec.classList.add('hidden');
+    }
+  }
+
+  async function openPerson(id, name, fromId) {
+    state.personId = id;
+    state.personFrom = fromId || state.detailId || null;
+    $('detailContent').innerHTML =
+      '<div class="person-head"><div class="person-photo">👤</div>' +
+        '<div><h2>' + esc(name || 'Ficha') + '</h2><div class="meta">Cargando filmografía…</div></div></div>' +
+      '<div class="sheet-body"><div class="skeleton-block"><span class="spinner"></span> Cargando ficha…</div></div>';
+    $('detailModal').scrollTop = 0;
+    $('closeDetail').focus();
+
+    try {
+      const p = await tmdb('/person/' + id, { language: LANG, append_to_response: 'movie_credits' }, { ttl: TTL.detail });
+      if (state.personId !== id) return;
+      renderPerson(p);
+    } catch (err) {
+      if (state.personId !== id) return;
+      $('detailContent').innerHTML =
+        '<div class="sheet-body"><button class="link-btn person-back" type="button" data-back-detail>← Volver</button>' +
+        '<div class="error-block">' + esc(tmdbMessage(err)) + '</div></div>';
+    }
+  }
+
+  function renderPerson(p) {
+    const name = p.name || 'Sin nombre';
+    const photo = imgUrl('w185', p.profile_path);
+    const dept = p.known_for_department || 'Interpretación';
+    const credits = (p.movie_credits && p.movie_credits.cast) || [];
+    const seen = new Set();
+    const list = credits
+      .filter((c) => c && c.id && !seen.has(c.id) && seen.add(c.id))
+      .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+      .slice(0, 24);
+
+    const films = list.length
+      ? list.map((c) => {
+          rememberMovie(c);
+          const poster = imgUrl('w92', c.poster_path);
+          const year = (c.release_date || '').slice(0, 4);
+          return '<button class="film-row" type="button" data-similar="' + Number(c.id) + '"' +
+            ' aria-label="Abrir ' + escapeAttr(c.title || '') + '">' +
+            (poster
+              ? '<img src="' + poster + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" width="92" height="138">'
+              : '<span class="ph">—</span>') +
+            '<span><span class="t">' + esc(c.title || 'Sin título') + '</span>' +
+              (c.character ? '<span class="c">' + esc(c.character) + '</span>' : '') + '</span>' +
+            '<span class="y">' + esc(year || '') + '</span></button>';
+        }).join('')
+      : '<p class="providers-note">Sin películas registradas.</p>';
+
+    $('detailContent').innerHTML =
+      '<div class="person-head">' +
+        (photo ? '<div class="person-photo"><img src="' + photo + '" alt=""></div>' : '<div class="person-photo">👤</div>') +
+        '<div><h2>' + esc(name) + '</h2>' +
+          '<div class="meta">' + esc(dept) + ' · ' + plural(list.length, 'película', 'películas') + '</div></div>' +
+      '</div>' +
+      '<div class="sheet-body">' +
+        '<button class="link-btn person-back" type="button" data-back-detail>← Volver a la película</button>' +
+        '<div class="section"><h3>Filmografía</h3><div class="film-list">' + films + '</div></div>' +
+        '<div class="section"><a class="btn" href="https://www.themoviedb.org/person/' + Number(p.id) +
+          '" target="_blank" rel="noopener noreferrer">Ver en TMDb</a></div>' +
+      '</div>';
+  }
+
+  /* ================= PUNTUACIONES ================= */
+  const SOURCES = [
+    { key: 'imdb', label: 'IMDb', cls: 'imdb', max: 10, fmt: (v) => v.toFixed(1) },
+    { key: 'rt', label: 'RT crítica', cls: 'rt', max: 100, fmt: (v) => Math.round(v) + '%' },
+    { key: 'rta', label: 'RT audiencia', cls: 'rt', max: 100, fmt: (v) => Math.round(v) + '%' },
+    { key: 'mc', label: 'Metacritic', cls: 'mc', max: 100, fmt: (v) => String(Math.round(v)) },
+    { key: 'mcu', label: 'MC usuarios', cls: 'mc', max: 100, fmt: (v) => v.toFixed(1) },
+    { key: 'lb', label: 'Letterboxd', cls: 'lb', max: 5, fmt: (v) => v.toFixed(1) + '★' },
+    { key: 'trakt', label: 'Trakt', cls: 'trakt', max: 10, fmt: (v) => v.toFixed(1) },
+    { key: 'mal', label: 'MyAnimeList', cls: 'mal', max: 10, fmt: (v) => v.toFixed(1) },
+    { key: 'tmdb', label: 'TMDb', cls: 'tmdb', max: 10, fmt: (v) => v.toFixed(1) }
+  ];
+  const MDB_ALIASES = {
+    imdb: 'imdb',
+    'internet movie database': 'imdb',
+    tomatoes: 'rt',
+    'rotten tomatoes': 'rt',
+    rottentomatoes: 'rt',
+    rt: 'rt',
+    tomatoesaudience: 'rta',
+    'rottentomatoes audience': 'rta',
+    audience: 'rta',
+    popcornmeter: 'rta',
+    metacritic: 'mc',
+    metacriticuser: 'mcu',
+    letterboxd: 'lb',
+    trakt: 'trakt',
+    myanimelist: 'mal',
+    mal: 'mal'
+  };
+
+  function setRatings(cards) {
+    const grid = $('ratingsGrid');
+    if (!grid) return;
+    if (!cards.length) {
+      grid.innerHTML = '<div class="rating-card muted">No hay puntuaciones externas disponibles.</div>';
+      return;
+    }
+    grid.innerHTML = cards.map((c) => {
+      const pct = Math.max(0, Math.min(100, (c.value / c.max) * 100));
+      return '<div class="rating-card ' + c.cls + '">' +
+        '<div class="src">' + esc(c.label) + '</div>' +
+        '<div class="val">' + esc(c.fmt(c.value)) + '</div>' +
+        '<div class="bar"><i style="width:' + pct.toFixed(1) + '%"></i></div></div>';
+    }).join('');
+  }
+
+  async function loadScores(m) {
+    const id = Number(m.id);
+    const values = {};
+    if (m.vote_average) values.tmdb = Number(m.vote_average);
+
+    const tasks = [];
+    const imdbId = (m.external_ids && m.external_ids.imdb_id) || m.imdb_id;
+    let omdbRatingValue = null;
+
+    if (S.omdb && imdbId) {
+      tasks.push(httpJson(API.OMDB + '?apikey=' + encodeURIComponent(S.omdb) + '&i=' + encodeURIComponent(imdbId), { ttl: TTL.scores })
+        .then((o) => {
+          if (!o || o.Response === 'False') return;
+          if (o.imdbRating && o.imdbRating !== 'N/A') {
+            const v = parseFloat(o.imdbRating);
+            if (isFinite(v)) {
+              values.imdb = v;
+              values.imdbVotes = parseImdbVotes(o.imdbVotes);
+              omdbRatingValue = v;
+            }
+          }
+          (o.Ratings || []).forEach((r) => {
+            const v = parseFloat(String(r.Value || ''));
+            if (isNaN(v)) return;
+            if (r.Source === 'Rotten Tomatoes') values.rt = v;
+            else if (r.Source === 'Metacritic') values.mc = v;
+          });
+        }).catch(() => {}));
+    }
+
+    if (S.mdblist) {
+      tasks.push(httpJson(API.MDBLIST + encodeURIComponent(id) + '?apikey=' + encodeURIComponent(S.mdblist), { ttl: TTL.scores })
+        .then((d) => {
+          if (!d) return;
+          const ratings = d.ratings || d.rating || [];
+          if (Array.isArray(ratings)) {
+            ratings.forEach((r) => {
+              const src = String(r.source || r.provider || '').toLowerCase().trim();
+              const key = MDB_ALIASES[src] || src;
+              const val = Number(r.value != null ? r.value : r.score);
+              if (key && isFinite(val)) values[key] = val;
+            });
+          } else if (ratings && typeof ratings === 'object') {
+            Object.entries(ratings).forEach(([src, val]) => {
+              const key = MDB_ALIASES[src.toLowerCase().trim()] || src.toLowerCase().trim();
+              const n = Number(val);
+              if (key && isFinite(n)) values[key] = n;
+            });
+          }
+        }).catch(() => {}));
+    }
+
+    if (tasks.length) {
+      const grid = $('ratingsGrid');
+      if (grid) grid.innerHTML = '<div class="rating-card muted"><span class="spinner"></span> Cargando puntuaciones…</div>';
+      await Promise.all(tasks);
+    }
+    if (state.detailId !== id || state.personId) return;
+
+    // Si OMDb dio la nota por IMDb ID, se reutiliza en la tarjeta y se guarda con votos.
+    if (omdbRatingValue != null) {
+      if (!imdbCache) imdbCache = readImdbCache();
+      const rating = omdbRatingValue.toFixed(1);
+      imdbCache[String(id)] = {
+        rating,
+        votes: Number(values.imdbVotes) || 0,
+        via: 'id',
+        ts: Date.now()
+      };
+      saveImdbCache();
+      applyImdb(String(id), rating);
+    }
+
+    // La nota principal del detalle también es la de IMDb.
+    const hero = $('heroScore');
+    if (hero && isFinite(values.imdb)) {
+      const tmdbTxt = isFinite(values.tmdb)
+        ? ' <span style="color:rgba(255,255,255,.6);font-weight:400">· TMDb ★ ' + values.tmdb.toFixed(1) +
+          (m.vote_count ? ' (' + numFmt.format(m.vote_count) + ' votos)' : '') + '</span>'
+        : '';
+      hero.innerHTML = 'IMDb ' + values.imdb.toFixed(1) + tmdbTxt;
+    }
+
+    const cards = SOURCES
+      .filter((s) => isFinite(values[s.key]))
+      .map((s) => ({ ...s, value: values[s.key] }));
+    if (!cards.length) {
+      setRatings([]);
+      return;
+    }
+    setRatings(cards);
+  }
+
+  function closeDetail() {
+    state.detailId = null;
+    state.personId = null;
+    state.personFrom = null;
+    $('detailModal').classList.remove('open');
+    document.body.classList.remove('locked');
+    $('detailContent').innerHTML = '';
+    syncPeliUrl();
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
+
+  /* ================= CONFIG ================= */
+  function openConfig(welcome = false) {
+    $('cfgTmdb').value = S.tmdb;
+    $('cfgOmdb').value = S.omdb;
+    $('cfgMdblist').value = S.mdblist;
+    $('cfgTraktId').value = S.traktId;
+    $('cfgTraktUser').value = S.traktUser;
+    $('cfgRegion').value = S.region;
+    $('cfgSessionOnly').checked = !!S.sessionOnly;
+    $('configTitle').textContent = welcome ? '👋 Bienvenido · configuración inicial' : '⚙️ Configuración';
+    setConfigError('');
+    $('configModal').classList.add('open');
+    document.body.classList.add('locked');
+    $('cfgTmdb').focus();
+  }
+  function closeConfig() {
+    $('configModal').classList.remove('open');
+    document.body.classList.remove('locked');
+    $('catalogPanel').classList.remove('hidden');
+    if (!S.tmdb && !watch.length) showEmptyNoKey();
+  }
+  function setConfigError(msg) {
+    const node = $('cfgError');
+    node.textContent = msg || '';
+    node.classList.toggle('on', !!msg);
+  }
+  function setConfigBusy(busy, text) {
+    const btn = $('cfgSave');
+    btn.disabled = busy;
+    btn.textContent = busy ? (text || 'Verificando…') : 'Guardar y verificar';
+  }
+
+  async function saveConfig() {
+    setConfigError('');
+    const tmdbKey = $('cfgTmdb').value.trim();
+    const omdbKey = $('cfgOmdb').value.trim();
+    const mdbKey = $('cfgMdblist').value.trim();
+    const traktId = $('cfgTraktId').value.trim();
+    const traktUser = $('cfgTraktUser').value.trim().replace(/^@/, '');
+    const region = $('cfgRegion').value;
+    const sessionOnly = $('cfgSessionOnly').checked;
+
+    if (!tmdbKey) { setConfigError('La API key de TMDb es obligatoria.'); $('cfgTmdb').focus(); return; }
+    if (traktUser && !traktId) { setConfigError('Para Trakt necesitas también el Client ID.'); $('cfgTraktId').focus(); return; }
+    if (traktId && !traktUser) { setConfigError('Indica tu usuario de Trakt además del Client ID.'); $('cfgTraktUser').focus(); return; }
+
+    const warnings = [];
+    setConfigBusy(true, 'Verificando TMDb…');
+    try {
+      await httpJson(tmdbUrl('/genre/movie/list', { language: LANG }, tmdbKey), {
+        headers: isToken(tmdbKey) ? { Authorization: 'Bearer ' + tmdbKey } : {},
+        ttl: TTL.genres,
+        force: true
+      });
+    } catch (err) {
+      setConfigBusy(false);
+      setConfigError(err && err.status === 401
+        ? 'TMDb rechazó la clave (HTTP 401). Revisa que sea v3 (32 caracteres) o un Read Token v4 completo.'
+        : 'No se pudo contactar con TMDb: ' + (err.message || 'error de red'));
+      return;
+    }
+
+    if (omdbKey) {
+      setConfigBusy(true, 'Verificando OMDb…');
+      try {
+        const o = await httpJson(API.OMDB + '?apikey=' + encodeURIComponent(omdbKey) + '&i=tt0133093', { ttl: 0, force: true, retries: 0 });
+        if (o && o.Response === 'False') warnings.push('OMDb: ' + (o.Error || 'clave no válida'));
+      } catch { warnings.push('OMDb no respondió; se guardará igualmente.'); }
+    }
+    if (mdbKey) {
+      setConfigBusy(true, 'Verificando MDBList…');
+      try {
+        await httpJson(API.MDBLIST + '603?apikey=' + encodeURIComponent(mdbKey), { ttl: 0, force: true, retries: 0 });
+      } catch (err) {
+        if (err && err.status === 401) warnings.push('MDBList: clave no válida.');
+        else warnings.push('MDBList no respondió; se guardará igualmente.');
+      }
+    }
+    if (traktId) {
+      setConfigBusy(true, 'Verificando Trakt…');
+      try {
+        const probe = traktUser
+          ? '/users/' + encodeURIComponent(traktUser) + '/watched/movies?limit=1'
+          : '/movies/trending?limit=1';
+        const res = await fetchTimeout(API.TRAKT + probe, {
+          headers: { 'trakt-api-version': '2', 'trakt-api-key': traktId }
+        });
+        if (!res.ok) throw traktError(res.status);
+      } catch (err) {
+        warnings.push(err && err.message ? err.message : 'Trakt no respondió.');
+      }
+    }
+
+    S.tmdb = tmdbKey;
+    S.omdb = omdbKey;
+    S.mdblist = mdbKey;
+    S.traktId = traktId;
+    S.traktUser = traktUser;
+    S.region = region || deriveRegion();
+    S.sessionOnly = sessionOnly;
+    persistSettings();
+
+    // Cambiar claves invalida el ranking calculado y el estado del selector IMDb.
+    dropRankPool();
+    syncImdbSortOptions();
+
+    setConfigBusy(false);
+    closeConfig();
+
+    if (!S.traktId || !S.traktUser) { trakt.loaded = false; renderTraktBar(); }
+    else { local.del(KEYS.trakt); }
+
+    $('hideWatched').disabled = !S.traktId;
+
+    await clearGenresAndLoad();
+    await loadTrakt(true);
+    state.page = 1;
+    state.mode = 'catalog';
+    updateWatchCount();
+    await reloadData();
+
+    if (warnings.length) toast(warnings.join(' · '), 'warn');
+    else toast('Configuración guardada');
+  }
+
+  async function clearGenresAndLoad() {
+    try { await loadGenres(); } catch (err) { toast(tmdbMessage(err), 'err'); }
+  }
+
+  function wipeAll() {
+    if (!window.confirm('Se borrarán las claves, la caché y la watchlist de este navegador. ¿Continuar?')) return;
+    [KEYS.settings, KEYS.watch, KEYS.trakt, KEYS.imdb, KEYS.legacyWatch,
+      'cine.imdb.v2', 'tmdb_api_key', 'omdb_api_key', 'mdblist_api_key', 'trakt_username',
+      'trakt_cache_v1', 'imdb_rating_cache_v1'].forEach((k) => { local.del(k); session.del(k); });
+    clearCache();
+    S = { ...DEFAULTS, region: deriveRegion() };
+    watch = [];
+    watchMap.clear();
+    movieIndex.clear();
+    trakt.watched.clear();
+    trakt.ratings.clear();
+    trakt.loaded = false;
+    trakt.error = '';
+    imdbCache = null;
+    dropRankPool();
+    hydrating = false;
+    hydrateTried.clear();
+    state.page = 1;
+    state.mode = 'catalog';
+    applyTheme();
+    resetFilterInputs();
+    syncImdbSortOptions();
+    updateWatchCount();
+    $('hideWatched').checked = false;
+    $('hideWatched').disabled = true;
+    renderTraktBar();
+    $('movieGrid').innerHTML = '';
+    $('pagination').classList.add('hidden');
+    setStatus('');
+    setAux('');
+    try { history.replaceState(null, '', location.pathname); } catch {}
+    closeConfig();
+    showEmptyNoKey();
+    openConfig(true);
+    toast('Datos borrados');
+  }
+
+  function exportWatchlist() {
+    if (!watch.length) { toast('La watchlist está vacía', 'warn'); return; }
+    const blob = new Blob([JSON.stringify({ app: 'CineCatálogo', version: 2, exported: new Date().toISOString(), items: watch }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'watchlist-cinecatalogo-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('Watchlist exportada');
+  }
+
+  function importWatchlist(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const items = Array.isArray(parsed) ? parsed : parsed.items;
+        if (!Array.isArray(items)) throw new Error('formato');
+        let added = 0;
+        items.forEach((raw) => {
+          const entry = normalizeEntry(raw);
+          if (!entry || watchMap.has(entry.id)) return;
+          if (!entry.added) entry.added = Date.now();
+          watch.unshift(entry);
+          watchMap.set(entry.id, entry);
+          added++;
+        });
+        saveWatchlist();
+        updateWatchCount();
+        if (state.mode === 'watchlist') renderWatchlist();
+        toast(added ? plural(added, 'película importada', 'películas importadas') : 'No había nada nuevo que importar', added ? 'ok' : 'warn');
+      } catch {
+        toast('El archivo no tiene un formato válido', 'err');
+      }
+    };
+    reader.onerror = () => toast('No se pudo leer el archivo', 'err');
+    reader.readAsText(file);
+  }
+
+  /* ================= EVENTOS ================= */
+  function debounce(fn, ms) {
+    let t = null;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  function bind() {
+    // Header
+    $('watchBtn').addEventListener('click', () => setMode(state.mode === 'watchlist' ? 'catalog' : 'watchlist'));
+    $('configBtn').addEventListener('click', () => openConfig());
+    $('themeBtn').addEventListener('click', () => {
+      S.theme = S.theme === 'light' ? 'dark' : 'light';
+      applyTheme();
+      persistSettings();
+    });
+
+    // Config
+    $('closeConfig').addEventListener('click', closeConfig);
+    $('configModal').addEventListener('click', (e) => { if (e.target === $('configModal')) closeConfig(); });
+    $('cfgSave').addEventListener('click', saveConfig);
+    $('cfgWipe').addEventListener('click', wipeAll);
+    $('cfgExport').addEventListener('click', exportWatchlist);
+    $('cfgImport').addEventListener('click', () => $('cfgFile').click());
+    $('cfgFile').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) importWatchlist(file);
+      e.target.value = '';
+    });
+    all('[data-reveal]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = $(btn.dataset.reveal);
+        input.type = input.type === 'password' ? 'text' : 'password';
+      });
+    });
+    ['cfgTmdb', 'cfgOmdb', 'cfgMdblist', 'cfgTraktId', 'cfgTraktUser'].forEach((id) => {
+      $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveConfig(); });
+    });
+
+    // Trakt bar
+    $('traktBar').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-trakt-refresh]');
+      if (!btn) return;
+      loadTrakt(true).then(() => {
+        if (!trakt.loaded) return;
+        if (state.mode === 'catalog') reloadData();
+        else renderWatchlist();
+      });
+    });
+
+    // Nuvio → Trakt: al volver a esta pestaña, refresca si los datos tienen más de 2 minutos.
+    let lastAutoSync = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!S.traktId || !S.traktUser) return;
+      const now = Date.now();
+      if (now - (trakt.ts || 0) < 2 * 60e3) return;
+      if (now - lastAutoSync < 60e3) return;
+      lastAutoSync = now;
+      loadTrakt(true, true).then(() => {
+        if (!trakt.loaded) return;
+        if (state.mode === 'catalog') reloadData();
+        else renderWatchlist();
+      });
+    });
+
+    // Filtros
+    const reload = () => { state.page = 1; reloadData(); };
+    $('yearFilter').addEventListener('change', reload);
+    $('genreFilter').addEventListener('change', reload);
+    $('sortFilter').addEventListener('change', () => { syncImdbControls(); reload(); });
+    $('fromYear').addEventListener('change', reload);
+    $('minVotes').addEventListener('input', debounce(reload, 500));
+    $('minVotes').addEventListener('change', reload);
+    $('imdbMin').addEventListener('change', reload);
+    $('rankMoreBtn').addEventListener('click', expandImdbRank);
+    all('input[data-exclude]').forEach((cb) => cb.addEventListener('change', reload));
+    $('hideWatched').addEventListener('change', reload);
+
+    $('resetFilters').addEventListener('click', () => {
+      resetFilterInputs();
+      reloadData();
+    });
+
+    // Búsqueda
+    const debouncedSearch = debounce(() => { state.page = 1; reloadData(); }, 380);
+    $('searchInput').addEventListener('input', function () {
+      $('searchWrap').classList.toggle('has-value', this.value.length > 0);
+      debouncedSearch();
+    });
+    $('clearSearch').addEventListener('click', () => {
+      $('searchInput').value = '';
+      $('searchWrap').classList.remove('has-value');
+      $('searchInput').focus();
+      state.page = 1;
+      reloadData();
+    });
+
+    // Paginación
+    $('prevBtn').addEventListener('click', () => { if (state.page > 1) { state.page--; reloadData(); scrollTop(); } });
+    $('nextBtn').addEventListener('click', () => { if (state.page < state.totalPages) { state.page++; reloadData(); scrollTop(); } });
+
+    // Grid (delegación)
+    $('movieGrid').addEventListener('click', (e) => {
+      const fav = e.target.closest('[data-fav]');
+      if (fav) { e.stopPropagation(); toggleWatch(Number(fav.dataset.fav)); return; }
+      const card = e.target.closest('.card');
+      if (card && !card.classList.contains('skeleton')) openDetail(Number(card.dataset.id));
+    });
+    $('movieGrid').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const card = e.target.closest('.card');
+      if (!card || card.classList.contains('skeleton')) return;
+      e.preventDefault();
+      openDetail(Number(card.dataset.id));
+    });
+
+    // Detalle
+    $('closeDetail').addEventListener('click', closeDetail);
+    $('detailModal').addEventListener('click', (e) => { if (e.target === $('detailModal')) closeDetail(); });
+    $('detailContent').addEventListener('click', (e) => {
+      const fav = e.target.closest('[data-fav]');
+      if (fav) { toggleWatch(Number(fav.dataset.fav)); return; }
+      const back = e.target.closest('[data-back-detail]');
+      if (back) {
+        const from = state.personFrom;
+        if (from) openDetail(from);
+        else closeDetail();
+        return;
+      }
+      const person = e.target.closest('[data-person]');
+      if (person) {
+        openPerson(Number(person.dataset.person), person.dataset.name || '', state.detailId);
+        return;
+      }
+      const similar = e.target.closest('[data-similar]');
+      if (similar) { openDetail(Number(similar.dataset.similar)); }
+    });
+
+    // Teclado
+    document.addEventListener('keydown', (e) => {
+      const detailOpen = $('detailModal').classList.contains('open');
+      const configOpen = $('configModal').classList.contains('open');
+      const openModal = detailOpen || configOpen;
+
+      if (e.key === 'Tab' && openModal) {
+        const root = detailOpen ? $('detailModal') : $('configModal');
+        const focusables = all('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])', root)
+          .filter((n) => n.offsetParent !== null);
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        return;
+      }
+
+      if (e.key === 'Escape' && openModal) {
+        if (detailOpen) closeDetail();
+        else closeConfig();
+        return;
+      }
+      if (openModal) return;
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+      if (e.key === '/' && !typing) { e.preventDefault(); $('searchInput').focus(); }
+      else if (e.key === 'ArrowLeft' && !typing && state.page > 1) { state.page--; reloadData(); scrollTop(); }
+      else if (e.key === 'ArrowRight' && !typing && state.page < state.totalPages) { state.page++; reloadData(); scrollTop(); }
+    });
+
+    // Historial
+    window.addEventListener('popstate', () => {
+      const p = readParams();
+      applyParams(p);
+      if (!p.peli && state.detailId) closeDetail();
+      else if (p.peli && !state.personId && p.peli !== state.detailId) openDetail(p.peli);
+      if (S.tmdb) reloadData();
+      else if (watch.length) renderWatchlist();
+    });
+  }
+
+  function scrollTop() {
+    const target = document.querySelector('.filters');
+    if (!target) return;
+    target.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' });
+  }
+
+  /* ================= INICIO ================= */
+  async function init() {
+    loadSettings();
+    loadWatchlist();
+    imdbCache = readImdbCache();
+    applyTheme();
+    populateYears();
+    populateRegions();
+    bind();
+    renderTraktBar();
+
+    const p = readParams();
+    applyParams(p);
+    loadRankPool();
+    syncImdbSortOptions();
+    $('hideWatched').disabled = !S.traktId;
+
+    if (!S.tmdb) {
+      $('catalogPanel').classList.remove('hidden');
+      if (watch.length) {
+        setMode('watchlist', false);
+        renderWatchlist();
+      } else {
+        showEmptyNoKey();
+        openConfig(true);
+      }
+      return;
+    }
+
+    $('catalogPanel').classList.remove('hidden');
+
+    try {
+      await loadGenres();
+      if (p.genre) $('genreFilter').value = p.genre;
+    } catch (err) {
+      if (err && err.status === 401) {
+        S.tmdb = '';
+        persistSettings();
+        showEmptyNoKey();
+        openConfig();
+        setConfigError('La clave guardada de TMDb ya no es válida.');
+        return;
+      }
+      toast(tmdbMessage(err), 'err');
+    }
+
+    const traktPromise = loadTrakt(false);
+    if (state.mode === 'watchlist') renderWatchlist();
+    else reloadData();
+    if (p.peli) openDetail(p.peli);
+
+    // Si Trakt no estaba en caché, repintamos cuando termine (badges y «ocultar vistas»).
+    if (!trakt.loaded) {
+      traktPromise.then(() => {
+        if (!trakt.loaded) return;
+        if (state.mode === 'catalog') reloadData();
+        else renderWatchlist();
+      });
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
